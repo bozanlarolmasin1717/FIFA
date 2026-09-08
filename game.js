@@ -857,6 +857,46 @@ class MatchManager {
     if (this.ui.fulltimeScore) {
       this.ui.fulltimeScore.textContent = `${hName} ${this.homeScore} - ${this.awayScore} ${aName}`;
     }
+
+    const statsEl = document.getElementById('fulltime-stats-container');
+    if (statsEl) {
+      const ms = this.game.matchStats || {};
+      const totalPoss = (ms.homePossessionTime || 0) + (ms.awayPossessionTime || 0) || 1;
+      const homePoss = Math.min(85, Math.max(15, Math.round(((ms.homePossessionTime || 0) / totalPoss) * 100)));
+      const awayPoss = 100 - homePoss;
+
+      const statsRows = [
+        { label: 'TOPLA OYNAMA', hVal: `${homePoss}%`, aVal: `${awayPoss}%`, hBar: homePoss, aBar: awayPoss },
+        { label: 'TOPLAM ŞUT', hVal: ms.homeShots || 0, aVal: ms.awayShots || 0, hBar: (ms.homeShots || 0), aBar: (ms.awayShots || 0) },
+        { label: 'İSABETLİ ŞUT', hVal: ms.homeShotsOnTarget || 0, aVal: ms.awayShotsOnTarget || 0, hBar: (ms.homeShotsOnTarget || 0), aBar: (ms.awayShotsOnTarget || 0) },
+        { label: 'BAŞARILI PAS', hVal: ms.homePasses || 0, aVal: ms.awayPasses || 0, hBar: (ms.homePasses || 0), aBar: (ms.awayPasses || 0) },
+        { label: 'TOP ÇALMA', hVal: ms.homeTackles || 0, aVal: ms.awayTackles || 0, hBar: (ms.homeTackles || 0), aBar: (ms.awayTackles || 0) }
+      ];
+
+      statsEl.innerHTML = `
+        <div class="fulltime-stats-grid">
+          ${statsRows.map(r => {
+            const sum = (r.hBar + r.aBar) || 1;
+            const hPct = Math.round((r.hBar / sum) * 100);
+            const aPct = 100 - hPct;
+            return `
+              <div class="stat-row">
+                <span class="stat-val-home">${r.hVal}</span>
+                <div class="stat-center">
+                  <span class="stat-label">${r.label}</span>
+                  <div class="stat-bar-dual">
+                    <div class="stat-bar-home" style="width: ${hPct}%;"></div>
+                    <div class="stat-bar-away" style="width: ${aPct}%;"></div>
+                  </div>
+                </div>
+                <span class="stat-val-away">${r.aVal}</span>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
     this.ui.fulltimeBanner.style.display = 'flex';
   }
 }
@@ -1108,6 +1148,20 @@ class FootballGame {
     this.isPaused = false;
     this.isGoalSequence = false;
     this.goalTimer = 0;
+
+    // Match Telemetry Statistics
+    this.matchStats = {
+      homeShots: 0,
+      homeShotsOnTarget: 0,
+      awayShots: 0,
+      awayShotsOnTarget: 0,
+      homePasses: 0,
+      awayPasses: 0,
+      homePossessionTime: 0,
+      awayPossessionTime: 0,
+      homeTackles: 0,
+      awayTackles: 0
+    };
 
     // Ball State
     this.ball = null;
@@ -2334,6 +2388,10 @@ class FootballGame {
       diveTimer: 0,
       diveDir: 0,
       touchCooldown: 0,
+      aiDecisionTimer: Math.random() * 0.35,
+      aiPassCooldown: 0,
+      aiShotCooldown: 0,
+      distributionTimer: 0,
       runCycle: Math.random() * Math.PI * 2,
       baseTorsoY: 1.35 * heightScale,
       parts: { torso, hips, head, leftLeg, rightLeg, leftArm, rightArm, selectionRing, playerIndicator, contactShadow },
@@ -2947,6 +3005,8 @@ class FootballGame {
         }
 
         this.flashShotSpeed(shotKmh);
+        this.matchStats.homeShots++;
+        if (Math.abs(targetZ) <= 3.66) this.matchStats.homeShotsOnTarget++;
 
         // Dispatch OnShotTaken event
         this.events.emit('OnShotTaken', this.activePlayer, charge, aim.clone());
@@ -2978,6 +3038,7 @@ class FootballGame {
         }
         elevation = 0.05;
         kickSoundType = 'normal';
+        this.matchStats.homePasses++;
 
         // Dispatch OnBallPassed event
         this.events.emit('OnBallPassed', this.activePlayer, charge, kickTarget);
@@ -3008,6 +3069,7 @@ class FootballGame {
         }
         elevation = 0.12;
         kickSoundType = 'finesse';
+        this.matchStats.homePasses++;
 
         // Dispatch OnBallPassed event
         this.events.emit('OnBallPassed', this.activePlayer, charge, kickTarget);
@@ -3022,6 +3084,7 @@ class FootballGame {
         spinY = (Math.random() - 0.5) * 12;
         kickSoundType = 'normal';
         kickTarget = playerPos.clone().addScaledVector(aim, forceMag * 0.9);
+        this.matchStats.homePasses++;
 
         // Dispatch OnBallPassed event
         this.events.emit('OnBallPassed', this.activePlayer, charge, kickTarget);
@@ -3163,6 +3226,257 @@ class FootballGame {
     });
 
     return best;
+  }
+
+  findBestAIPass(carrier, isHome) {
+    const squad = isHome ? this.homePlayers : this.awayPlayers;
+    const opponents = isHome ? this.awayPlayers : this.homePlayers;
+    const carrierPos = carrier.mesh.position;
+    const pasStat = carrier.data.pas || 75;
+
+    let bestOption = null;
+    let highestScore = -999;
+
+    // 1. Check Wing Cross opportunity (in final third, out wide)
+    const isInCrossingZone = isHome 
+      ? (carrierPos.x > 26 && Math.abs(carrierPos.z) > 12)
+      : (carrierPos.x < -26 && Math.abs(carrierPos.z) > 12);
+
+    if (isInCrossingZone) {
+      // Find central attacker inside or rushing into penalty box
+      for (const tm of squad) {
+        if (tm === carrier || tm.data.pos === 'GK') continue;
+        const inBox = isHome
+          ? (tm.mesh.position.x > 33 && Math.abs(tm.mesh.position.z) < 14)
+          : (tm.mesh.position.x < -33 && Math.abs(tm.mesh.position.z) < 14);
+
+        if (inBox) {
+          const crossTarget = tm.mesh.position.clone().add(new THREE.Vector3(isHome ? 2.5 : -2.5, 0, (Math.random() - 0.5) * 2));
+          return {
+            type: 'cross',
+            player: tm,
+            targetPos: crossTarget,
+            force: 23 + (pasStat / 100) * 6,
+            elevation: 5.5 + Math.random() * 2.0
+          };
+        }
+      }
+    }
+
+    // 2. Evaluate all teammates for through balls or ground passes
+    for (const tm of squad) {
+      if (tm === carrier || tm.data.pos === 'GK') continue;
+      const tmPos = tm.mesh.position;
+      const dist = carrierPos.distanceTo(tmPos);
+      if (dist < 4.5 || dist > 42.0) continue;
+
+      const toTm = new THREE.Vector3().subVectors(tmPos, carrierPos);
+      const toTmDir = toTm.clone().normalize();
+
+      // Forward progression score (isHome attacks +X, Away attacks -X)
+      const forwardProgress = isHome ? (tmPos.x - carrierPos.x) : (carrierPos.x - tmPos.x);
+
+      // Check opponent marking: distance to closest opponent
+      let closestOppDist = 999;
+      for (const opp of opponents) {
+        const d = opp.mesh.position.distanceTo(tmPos);
+        if (d < closestOppDist) closestOppDist = d;
+      }
+
+      // Check passing lane interception: are opponents in line between carrier and tm?
+      let laneBlocked = false;
+      for (const opp of opponents) {
+        const toOpp = new THREE.Vector3().subVectors(opp.mesh.position, carrierPos);
+        const proj = toOpp.dot(toTmDir);
+        if (proj > 2.0 && proj < dist - 2.0) {
+          const perpDist = toOpp.clone().subScaledVector(toTmDir, proj).length();
+          if (perpDist < 1.75) {
+            laneBlocked = true;
+            break;
+          }
+        }
+      }
+
+      if (laneBlocked && closestOppDist < 2.5) continue;
+
+      // Score options
+      let score = 0;
+      score += forwardProgress * 1.5; // Prefer forward passes
+      score += Math.min(10, closestOppDist * 2.2); // Prefer unmarked teammates
+      score -= Math.abs(dist - 16.0) * 0.35; // Ideal pass distance 12-24m
+
+      // Through ball bonus if runner is sprinting forward into open pitch
+      const isThroughRunner = forwardProgress > 4.5 && (isHome ? tmPos.x < 44 : tmPos.x > -44);
+      if (isThroughRunner && closestOppDist > 2.8) {
+        score += 8.5;
+      }
+
+      if (score > highestScore) {
+        highestScore = score;
+        if (isThroughRunner) {
+          const leadDistance = 6.5 + (pasStat / 100) * 2.5;
+          const leadOffset = new THREE.Vector3(isHome ? leadDistance : -leadDistance, 0, (Math.random() - 0.5) * 1.5);
+          bestOption = {
+            type: 'through',
+            player: tm,
+            targetPos: tmPos.clone().add(leadOffset),
+            force: Math.min(32, Math.max(18, dist * 1.25 + 5)),
+            elevation: 0.15
+          };
+        } else {
+          bestOption = {
+            type: 'pass',
+            player: tm,
+            targetPos: tmPos.clone(),
+            force: Math.min(30, Math.max(16, dist * 1.2 + 4)),
+            elevation: 0.05
+          };
+        }
+      }
+    }
+
+    return bestOption;
+  }
+
+  executeAIPass(carrier, isHome, passOption) {
+    if (!passOption || !passOption.player) return;
+
+    const carrierPos = carrier.mesh.position;
+    const targetPos = passOption.targetPos || passOption.player.mesh.position;
+    const aim = new THREE.Vector3().subVectors(targetPos, carrierPos);
+    aim.y = 0;
+    aim.normalize();
+
+    this.ballVel.copy(aim).multiplyScalar(passOption.force || 20);
+    this.ballVel.y = passOption.elevation || 0.1;
+    this.ballSpin.set(0, (Math.random() - 0.5) * 6, 0);
+
+    this.passReceiver = passOption.player;
+    carrier.hasPossession = false;
+    carrier.kickTimer = 0.32;
+    this.kickCooldown = 0.35;
+    carrier.aiPassCooldown = 1.2;
+    this.lastKicker = carrier;
+
+    if (isHome) {
+      this.matchStats.homePasses++;
+    } else {
+      this.matchStats.awayPasses++;
+    }
+
+    const soundType = passOption.type === 'cross' ? 'normal' : 'finesse';
+    this.audio.playKick(0.75, soundType);
+
+    this.events.emit('OnBallPassed', carrier, 0.7, targetPos.clone());
+    this.onBallPassed(carrier, 0.7, targetPos.clone());
+  }
+
+  executeAIShot(carrier, isHome) {
+    const goalX = isHome ? 50.0 : -50.0;
+    const oppGk = isHome ? this.awayPlayers[0] : this.homePlayers[0];
+    const gkZ = oppGk ? oppGk.mesh.position.z : 0;
+    const shoStat = carrier.data.sho || 75;
+
+    // Corner targeting away from goalkeeper (posts at +/- 3.66)
+    let targetZ = 0;
+    if (gkZ > 0.4) {
+      targetZ = -(2.7 + Math.random() * 0.6); // Aim left post
+    } else if (gkZ < -0.4) {
+      targetZ = (2.7 + Math.random() * 0.6); // Aim right post
+    } else {
+      targetZ = (Math.random() > 0.5 ? 1 : -1) * (2.8 + Math.random() * 0.5);
+    }
+
+    // Top-corner or bottom-corner elevation
+    const isTopCorner = Math.random() < 0.4;
+    const elevation = isTopCorner ? (1.85 + Math.random() * 0.45) : (0.45 + Math.random() * 0.65);
+
+    const shotAim = new THREE.Vector3(goalX, 0, targetZ).sub(carrier.mesh.position).normalize();
+    const forceMag = 27 + (shoStat / 100) * 11 + Math.random() * 4;
+
+    this.ballVel.copy(shotAim).multiplyScalar(forceMag);
+    this.ballVel.y = elevation;
+
+    // Dynamic Magnus curl
+    const spinDir = targetZ > carrier.mesh.position.z ? 1 : -1;
+    this.ballSpin.set(0, spinDir * (12.0 + (shoStat / 100) * 6.0), 0);
+
+    carrier.hasPossession = false;
+    carrier.kickTimer = 0.35;
+    this.kickCooldown = 0.45;
+    carrier.aiShotCooldown = 2.0;
+    this.lastKicker = carrier;
+
+    this.audio.playKick(0.9, 'power');
+    this.flashShotSpeed(Math.round(forceMag * 3.6));
+
+    if (isHome) {
+      this.matchStats.homeShots++;
+      if (Math.abs(targetZ) <= 3.66) this.matchStats.homeShotsOnTarget++;
+    } else {
+      this.matchStats.awayShots++;
+      if (Math.abs(targetZ) <= 3.66) this.matchStats.awayShotsOnTarget++;
+    }
+
+    this.events.emit('OnShotTaken', carrier, forceMag / 40, shotAim.clone());
+    this.onShotTaken(carrier, forceMag / 40, shotAim.clone());
+  }
+
+  executeAISetPiece(carrier, subType, isHome) {
+    if (!carrier) return;
+    const squad = isHome ? this.homePlayers : this.awayPlayers;
+
+    if (subType === 'corner') {
+      // Cross into 6-yard box or penalty spot
+      const targetX = isHome ? (40.0 + (Math.random() - 0.5) * 4) : (-40.0 + (Math.random() - 0.5) * 4);
+      const targetZ = (Math.random() - 0.5) * 8.0;
+      const targetPos = new THREE.Vector3(targetX, 0, targetZ);
+      const aim = new THREE.Vector3().subVectors(targetPos, carrier.mesh.position).normalize();
+
+      this.ballVel.copy(aim).multiplyScalar(22 + Math.random() * 4);
+      this.ballVel.y = 5.8 + Math.random() * 1.8;
+      this.ballSpin.set(0, -Math.sign(carrier.mesh.position.z || 1) * 10, 0);
+
+      // Find best attacking target in box
+      const targetAttacker = squad.find(p => p !== carrier && p.data.pos !== 'GK') || squad[9];
+      this.passReceiver = targetAttacker;
+
+      carrier.hasPossession = false;
+      carrier.kickTimer = 0.35;
+      this.kickCooldown = 0.5;
+      this.lastKicker = carrier;
+      this.audio.playKick(0.8, 'normal');
+    } else if (subType === 'goal_kick') {
+      // Chip or ground pass to open fullback or midfielder
+      const openMate = squad.find(p => p !== carrier && (p.data.pos === 'CB' || p.data.pos === 'LB' || p.data.pos === 'RB' || p.data.pos === 'CDM')) || squad[1];
+      const targetPos = openMate ? openMate.mesh.position.clone() : new THREE.Vector3(isHome ? -20 : 20, 0, 0);
+      const aim = new THREE.Vector3().subVectors(targetPos, carrier.mesh.position).normalize();
+
+      this.ballVel.copy(aim).multiplyScalar(20 + Math.random() * 4);
+      this.ballVel.y = 2.5 + Math.random() * 2.0;
+      this.passReceiver = openMate;
+
+      carrier.hasPossession = false;
+      carrier.kickTimer = 0.35;
+      this.kickCooldown = 0.5;
+      this.lastKicker = carrier;
+      this.audio.playKick(0.8, 'normal');
+    } else {
+      // Throw-in
+      const openMate = squad.find(p => p !== carrier && p.mesh.position.distanceTo(carrier.mesh.position) < 20 && p.data.pos !== 'GK') || squad[1];
+      const targetPos = openMate ? openMate.mesh.position.clone() : new THREE.Vector3(carrier.mesh.position.x, 0, 0);
+      const aim = new THREE.Vector3().subVectors(targetPos, carrier.mesh.position).normalize();
+
+      this.ballVel.copy(aim).multiplyScalar(14 + Math.random() * 3);
+      this.ballVel.y = 2.0;
+      this.passReceiver = openMate;
+
+      carrier.hasPossession = false;
+      carrier.kickTimer = 0.3;
+      this.kickCooldown = 0.4;
+      this.lastKicker = carrier;
+      this.audio.playKick(0.5, 'normal');
+    }
   }
 
   flashShotSpeed(kmh) {
@@ -3407,25 +3721,34 @@ class FootballGame {
       }
     }
 
-    // 9. Pass Receiver Proactive Movement & First Touch
-    if (this.passReceiver && this.passReceiver !== this.activePlayer) {
+    // 9. Universal Pass Receiver Proactive Movement & First Touch
+    if (this.passReceiver) {
       const toBall = new THREE.Vector3().subVectors(this.ball.position, this.passReceiver.mesh.position);
       toBall.y = 0;
-      if (toBall.length() > 0.4) {
-        toBall.normalize().multiplyScalar(8.0 * dt);
+      const dist = toBall.length();
+      if (dist > 0.3) {
+        toBall.normalize().multiplyScalar(8.2 * dt);
         this.passReceiver.mesh.position.add(toBall);
+        this.passReceiver.mesh.rotation.y = Math.atan2(toBall.x, toBall.z);
+        this.updatePlayerLocomotion(this.passReceiver, dt, true, 8.2);
       }
 
       const distToReceiver = this.ball.position.distanceTo(this.passReceiver.mesh.position);
-      if (distToReceiver < 2.0) {
-        if (this.activePlayer) this.activePlayer.parts.selectionRing.material.opacity = 0;
-        this.activePlayer = this.passReceiver;
-        this.activePlayer.hasPossession = true;
+      if (distToReceiver < 2.0 && this.ball.position.y < 2.2) {
+        if (this.passReceiver.isHome) {
+          if (this.activePlayer && this.activePlayer !== this.passReceiver) {
+            this.activePlayer.parts.selectionRing.material.opacity = 0;
+          }
+          this.activePlayer = this.passReceiver;
+          this.updateHUDPlayerCard();
+        }
+        this.homePlayers.forEach(p => p.hasPossession = false);
+        this.awayPlayers.forEach(p => p.hasPossession = false);
+        this.passReceiver.hasPossession = true;
         this.passReceiver = null;
         this.kickCooldown = 0.15;
         // Soft first touch cushion
-        this.ballVel.multiplyScalar(0.2);
-        this.updateHUDPlayerCard();
+        this.ballVel.multiplyScalar(0.18);
       }
     }
 
@@ -3812,6 +4135,15 @@ class FootballGame {
 
   // --- Players Update (Human Controls + 11v11 AI + Universal Locomotion) ---
   updatePlayers(dt) {
+    // 0. Match Statistics: Live Possession Tracking
+    const homeHasBall = this.homePlayers.some(p => p.hasPossession);
+    const awayHasBall = this.awayPlayers.some(p => p.hasPossession);
+    if (homeHasBall) {
+      this.matchStats.homePossessionTime += dt;
+    } else if (awayHasBall) {
+      this.matchStats.awayPossessionTime += dt;
+    }
+
     // 1. User Controlled Active Player Movement
     if (this.activePlayer) {
       if (this.kickCooldown > 0) {
@@ -3825,7 +4157,6 @@ class FootballGame {
       if (this.keys['KeyA'] || this.keys['ArrowLeft']) move.x -= 1;
       if (this.keys['KeyD'] || this.keys['ArrowRight']) move.x += 1;
 
-      // 8-Directional Fluid Locomotion, Acceleration & On-Ball vs Off-Ball Speed Mechanics
       const locomotionState = this.locomotionEngine.updatePlayerMovement(
         this.activePlayer,
         move,
@@ -3833,48 +4164,7 @@ class FootballGame {
         dt
       );
 
-      // Animate active player locomotion with accurate current speed
       this.updatePlayerLocomotion(this.activePlayer, dt, locomotionState.isMoving, locomotionState.currentSpeed);
-
-      // Dribbling & Ball Possession Check
-      const pPos = this.activePlayer.mesh.position;
-      const distToBall = pPos.distanceTo(this.ball.position);
-
-      // Can only regain possession if not currently recovering from stumble
-      if (this.kickCooldown <= 0 && this.activePlayer.stumbleTimer <= 0 && distToBall < 2.0) {
-        if (!this.activePlayer.hasPossession) {
-          this.activePlayer.hasPossession = true;
-          this.awayPlayers.forEach(op => op.hasPossession = false);
-        }
-      }
-
-      // Dynamic Cadence-Based Dribbling & Ball Control (Close control vs sprint knock-on)
-      if (this.activePlayer.hasPossession && this.kickCooldown <= 0 && this.activePlayer.stumbleTimer <= 0) {
-        const rotY = this.activePlayer.mesh.rotation.y;
-        const fwd = new THREE.Vector3(Math.sin(rotY), 0, Math.cos(rotY));
-        const paceStat = this.activePlayer.data.pace || 80;
-        const driStat = this.activePlayer.data.dri || 80;
-
-        // Natural foot-to-ball distance:
-        // - Close control in normal jog: 0.95m - 1.05m directly at the foot
-        // - Sprint knock-on: 2.1m - 2.6m pushed ahead into stride, creating authentic tackle windows
-        const isSprinting = locomotionState.isSprinting;
-        const leadDist = isSprinting ? (2.1 + (paceStat / 100) * 0.5) : (0.95 + (driStat / 100) * 0.1);
-        const dribbleTarget = pPos.clone().add(fwd.multiplyScalar(leadDist));
-        dribbleTarget.y = this.ballRadius;
-
-        // Dynamic interpolation rate: tighter touch for elite dribblers, looser during top sprint
-        const lerpSpeed = isSprinting ? 0.22 : (0.38 + (driStat / 100) * 0.1);
-        this.ball.position.lerp(dribbleTarget, lerpSpeed);
-
-        // Natural rolling rotation of the ball on pitch matching dribble velocity
-        const ballSpeed = this.activePlayer.vel ? this.activePlayer.vel.length() : 0;
-        if (ballSpeed > 0.08) {
-          this.ball.rotation.x += (this.activePlayer.vel.z / this.ballRadius) * dt;
-          this.ball.rotation.z -= (this.activePlayer.vel.x / this.ballRadius) * dt;
-        }
-        this.ballVel.set(0, 0, 0);
-      }
 
       // Slide Tackle Execution & Movement
       if (this.activePlayer.isTackling) {
@@ -3888,6 +4178,29 @@ class FootballGame {
         }
       }
 
+      // Dynamic Dribbling & Ball Control for User Active Player
+      if (this.activePlayer.hasPossession && this.kickCooldown <= 0 && this.activePlayer.stumbleTimer <= 0) {
+        const rotY = this.activePlayer.mesh.rotation.y;
+        const fwd = new THREE.Vector3(Math.sin(rotY), 0, Math.cos(rotY));
+        const paceStat = this.activePlayer.data.pace || 80;
+        const driStat = this.activePlayer.data.dri || 80;
+
+        const isSprinting = locomotionState.isSprinting;
+        const leadDist = isSprinting ? (2.1 + (paceStat / 100) * 0.4) : (0.95 + (driStat / 100) * 0.1);
+        const dribbleTarget = this.activePlayer.mesh.position.clone().add(fwd.multiplyScalar(leadDist));
+        dribbleTarget.y = this.ballRadius;
+
+        const lerpSpeed = isSprinting ? 0.22 : (0.38 + (driStat / 100) * 0.1);
+        this.ball.position.lerp(dribbleTarget, lerpSpeed);
+
+        const ballSpeed = this.activePlayer.vel ? this.activePlayer.vel.length() : 0;
+        if (ballSpeed > 0.08) {
+          this.ball.rotation.x += (this.activePlayer.vel.z / this.ballRadius) * dt;
+          this.ball.rotation.z -= (this.activePlayer.vel.x / this.ballRadius) * dt;
+        }
+        this.ballVel.set(0, 0, 0);
+      }
+
       // Pitch bounds clamping
       this.activePlayer.mesh.position.x = THREE.MathUtils.clamp(this.activePlayer.mesh.position.x, -49.2, 49.2);
       this.activePlayer.mesh.position.z = THREE.MathUtils.clamp(this.activePlayer.mesh.position.z, -31.2, 31.2);
@@ -3896,7 +4209,35 @@ class FootballGame {
       this.activePlayer.parts.selectionRing.material.opacity = 0.85;
     }
 
-    // 2. Pressing AI Identification
+    // 2. Universal Loose Ball Acquisition (Fair contest between Home & Away!)
+    const someoneHasBall = homeHasBall || awayHasBall;
+    if (!someoneHasBall && this.kickCooldown <= 0 && !this.passReceiver && this.ball.position.y < 1.8) {
+      let closestCandidate = null;
+      let minCandidateDist = 1.35;
+      const bPos = this.ball.position;
+
+      const allPlayers = [...this.homePlayers, ...this.awayPlayers];
+      for (const p of allPlayers) {
+        if (p.stumbleTimer > 0) continue;
+        const d = p.mesh.position.distanceTo(bPos);
+        if (d < minCandidateDist) {
+          minCandidateDist = d;
+          closestCandidate = p;
+        }
+      }
+
+      if (closestCandidate) {
+        closestCandidate.hasPossession = true;
+        this.ballVel.multiplyScalar(0.12);
+        if (closestCandidate.isHome && closestCandidate !== this.activePlayer && closestCandidate.data.pos !== 'GK') {
+          if (this.activePlayer) this.activePlayer.parts.selectionRing.material.opacity = 0;
+          this.activePlayer = closestCandidate;
+          this.updateHUDPlayerCard();
+        }
+      }
+    }
+
+    // 3. Tactical Pressing Targets
     let closestOpponent = null;
     let minOppDist = 9999;
     const bPos = this.ball.position;
@@ -3920,22 +4261,20 @@ class FootballGame {
       }
     });
 
-    const awayHasBall = this.awayPlayers.some(p => p.hasPossession);
-
-    // 3. Teammates AI (Home Team)
+    // 4. Teammates AI (Home Team)
     this.homePlayers.forEach((p, i) => {
       if (p === this.activePlayer) return;
       p.parts.selectionRing.material.opacity = 0;
-      const isPressing = awayHasBall && (p === closestTeammate && minMateDist < 20);
+      const isPressing = awayHasBall && (p === closestTeammate && minMateDist < 24);
       this.updateTeammateAI(p, this.baseFormationHome[i], dt, isPressing);
 
       p.mesh.position.x = THREE.MathUtils.clamp(p.mesh.position.x, -49.2, 49.2);
       p.mesh.position.z = THREE.MathUtils.clamp(p.mesh.position.z, -31.2, 31.2);
     });
 
-    // 4. Opponent AI (Away Team - Tactical marking, standing tackles & interceptions)
+    // 5. Opponent AI (Away Team)
     this.awayPlayers.forEach((p, i) => {
-      const isPressing = (p === closestOpponent && minOppDist < 22);
+      const isPressing = !awayHasBall && (p === closestOpponent && minOppDist < 26);
       this.updateOpponentAI(p, this.baseFormationAway[i], dt, isPressing);
 
       p.mesh.position.x = THREE.MathUtils.clamp(p.mesh.position.x, -49.2, 49.2);
@@ -3943,48 +4282,18 @@ class FootballGame {
     });
   }
 
+  // --- Home Team Teammates AI ---
   updateTeammateAI(player, baseSlot, dt, isPressing) {
+    if (player.tackleCooldown > 0) player.tackleCooldown -= dt;
+
     if (player.data.pos === 'GK') {
-      // Home GK (Courtois #1) patrols goal line at X = -49.2
-      const targetZ = THREE.MathUtils.clamp(this.ball.position.z * 0.55, -2.4, 2.4);
-      player.mesh.position.z = THREE.MathUtils.lerp(player.mesh.position.z, targetZ, dt * 4.0);
-      player.mesh.position.x = -49.2;
+      this.updateHomeGoalkeeperAI(player, dt);
+      return;
+    }
 
-      // Realistic GK Diving Saves & Concessions
-      const distToBall = player.mesh.position.distanceTo(this.ball.position);
-      const isShotComing = this.ballVel.x < -7.0 && this.ball.position.x < -36.0;
-
-      if (isShotComing && !this.isGoalSequence && distToBall < 3.0) {
-        const shotZ = this.ball.position.z;
-        const shotY = this.ball.position.y;
-        const dZ = Math.abs(shotZ - player.mesh.position.z);
-        const diveReach = 1.95; // Courtois reach
-
-        // If ball is right in top corner or extreme bottom post, GK cannot reach -> GOAL!
-        const isUnstoppable = (Math.abs(shotZ) > 2.8 && dZ > 1.5) || (shotY > 1.95 && Math.abs(shotZ) > 2.2);
-
-        if (!isUnstoppable && dZ <= diveReach && player.diveTimer <= 0) {
-          player.diveTimer = 0.7;
-          player.diveDir = shotZ > player.mesh.position.z ? -1 : 1;
-          const shotSpeed = this.ballVel.length();
-
-          if (shotSpeed > 32) {
-            // Parried rebound deflection
-            this.ballVel.x = Math.max(10, -this.ballVel.x * 0.35);
-            this.ballVel.z += (Math.random() - 0.5) * 12.0;
-            this.ballVel.y = 2.5;
-          } else {
-            // Controlled save / corner punch
-            this.ballVel.x = 8.0;
-            this.ballVel.z = (Math.random() - 0.5) * 6.0;
-            this.ballVel.y = 1.2;
-          }
-          this.audio.playKick(0.7, 'normal');
-          this.kickCooldown = 0.5;
-        }
-      }
-
-      this.updatePlayerLocomotion(player, dt, Math.abs(player.mesh.position.z - targetZ) > 0.1, 4.0);
+    // If an AI teammate has possession (e.g. from pass or tackle)
+    if (player.hasPossession) {
+      this.updateHomeCarrierAI(player, dt);
       return;
     }
 
@@ -3998,32 +4307,425 @@ class FootballGame {
       player.mesh.position.addScaledVector(toBall, 8.0 * dt);
       player.mesh.rotation.y = Math.atan2(toBall.x, toBall.z);
 
-      // Teammate Tackle
-      if (dist < 1.6 && this.kickCooldown <= 0) {
+      // Teammate Tackle attempt
+      if (dist < 1.6 && player.tackleCooldown <= 0 && this.kickCooldown <= 0) {
         player.kickTimer = 0.3;
-        player.hasPossession = true;
-        this.awayPlayers.forEach(op => {
-          if (op.hasPossession) {
-            op.hasPossession = false;
-            op.stumbleTimer = 0.45;
-          }
-        });
-        if (this.activePlayer) this.activePlayer.parts.selectionRing.material.opacity = 0;
-        this.activePlayer = player;
-        this.updateHUDPlayerCard();
-        this.audio.playTackle();
+        player.tackleCooldown = 1.0;
+        const defSkill = (player.data.def || 75) / 100;
+        this.matchStats.homeTackles++;
+
+        if (Math.random() < defSkill * 0.75) {
+          player.hasPossession = true;
+          this.awayPlayers.forEach(op => {
+            if (op.hasPossession) {
+              op.hasPossession = false;
+              op.stumbleTimer = 0.45;
+            }
+          });
+          if (this.activePlayer) this.activePlayer.parts.selectionRing.material.opacity = 0;
+          this.activePlayer = player;
+          this.updateHUDPlayerCard();
+          this.audio.playTackle();
+        }
       }
 
       this.updatePlayerLocomotion(player, dt, true, 8.0);
       return;
     }
 
-    // Proactive attacking runs when user has possession
-    const attackOffset = this.activePlayer && this.activePlayer.hasPossession ? 9.0 : 0.0;
+    // Dynamic off-the-ball attacking runs when user has possession
+    const userHasBall = this.activePlayer && this.activePlayer.hasPossession;
+    let forwardOffset = 0;
+    let lateralOffset = 0;
+
+    if (userHasBall) {
+      if (player.data.pos === 'ST') {
+        forwardOffset = 12.0; // Striker pushes through defense
+      } else if (player.data.pos === 'RW' || player.data.pos === 'LW') {
+        forwardOffset = 9.0;
+        lateralOffset = Math.sign(baseSlot.z) * 3.0; // Stretch wing
+      } else if (player.data.pos === 'CAM') {
+        forwardOffset = 7.0;
+      }
+    }
+
     const target = new THREE.Vector3(
-      baseSlot.x + this.ball.position.x * 0.35 + attackOffset,
+      baseSlot.x + this.ball.position.x * 0.35 + forwardOffset,
       0,
-      baseSlot.z + this.ball.position.z * 0.25
+      baseSlot.z + this.ball.position.z * 0.25 + lateralOffset
+    );
+
+    const dir = new THREE.Vector3().subVectors(target, player.mesh.position);
+    const dist = dir.length();
+    const isMoving = dist > 0.8;
+
+    if (isMoving) {
+      const speed = isMoving ? 7.2 : 0;
+      dir.normalize().multiplyScalar(7.2);
+      player.mesh.position.addScaledVector(dir, dt);
+      player.mesh.rotation.y = Math.atan2(dir.x, dir.z);
+      this.updatePlayerLocomotion(player, dt, isMoving, speed);
+    } else {
+      this.updatePlayerLocomotion(player, dt, false, 0);
+    }
+  }
+
+  // --- Home Goalkeeper AI (Courtois at X = -49.2) ---
+  updateHomeGoalkeeperAI(player, dt) {
+    // If Courtois has the ball (e.g. after catch or goal kick)
+    if (player.hasPossession) {
+      player.distributionTimer = (player.distributionTimer || 0) + dt;
+      const fwd = new THREE.Vector3(1, 0, 0);
+      this.ball.position.copy(player.mesh.position).add(fwd.multiplyScalar(0.9));
+      this.ball.position.y = this.ballRadius;
+      this.ballVel.set(0, 0, 0);
+
+      if (player.distributionTimer > 1.0) {
+        player.distributionTimer = 0;
+        // Pass or lob out to open fullback or midfielder
+        const bestPass = this.findBestAIPass(player, true);
+        if (bestPass) {
+          this.executeAIPass(player, true, bestPass);
+        } else {
+          // Direct chip upfield
+          const target = this.homePlayers.find(p => p !== player && p.data.pos !== 'GK') || this.homePlayers[1];
+          this.executeAIPass(player, true, { type: 'pass', player: target, force: 22, elevation: 3.5 });
+        }
+      }
+      this.updatePlayerLocomotion(player, dt, false, 0);
+      return;
+    }
+
+    // Dynamic angle bisector & arc positioning
+    const distBallX = THREE.MathUtils.clamp((this.ball.position.x + 50.0) / 100.0, 0, 1);
+    const targetX = -49.2 + Math.min(3.5, distBallX * 5.0);
+    const targetZ = THREE.MathUtils.clamp(this.ball.position.z * 0.62, -2.6, 2.6);
+
+    player.mesh.position.x = THREE.MathUtils.lerp(player.mesh.position.x, targetX, dt * 4.0);
+    player.mesh.position.z = THREE.MathUtils.lerp(player.mesh.position.z, targetZ, dt * 5.0);
+    player.mesh.rotation.y = Math.PI / 2;
+
+    // 1v1 Rush Out: If opponent attacker enters box with ball alone
+    const awayCarrier = this.awayPlayers.find(p => p.hasPossession);
+    if (awayCarrier && awayCarrier.mesh.position.x < -34 && Math.abs(awayCarrier.mesh.position.z) < 14) {
+      const toCarrier = new THREE.Vector3().subVectors(awayCarrier.mesh.position, player.mesh.position);
+      toCarrier.y = 0;
+      const d = toCarrier.length();
+      if (d < 4.5) {
+        toCarrier.normalize();
+        player.mesh.position.addScaledVector(toCarrier, 6.5 * dt);
+        if (d < 1.6 && player.diveTimer <= 0) {
+          player.diveTimer = 0.7;
+          player.diveDir = toCarrier.z > 0 ? 1 : -1;
+          awayCarrier.hasPossession = false;
+          awayCarrier.stumbleTimer = 0.5;
+          player.hasPossession = true;
+          this.audio.playTackle();
+        }
+      }
+    }
+
+    // Realistic GK Diving Saves & Concessions
+    const distToBall = player.mesh.position.distanceTo(this.ball.position);
+    const isShotComing = this.ballVel.x < -7.0 && this.ball.position.x < -28.0;
+
+    if (isShotComing && !this.isGoalSequence && distToBall < 4.0) {
+      const timeToGoal = Math.max(0.01, (-50.0 - this.ball.position.x) / this.ballVel.x);
+      const predZ = this.ball.position.z + this.ballVel.z * timeToGoal;
+      const predY = Math.max(0, this.ball.position.y + this.ballVel.y * timeToGoal - 0.5 * 13.2 * timeToGoal * timeToGoal);
+
+      const isInsideGoal = Math.abs(predZ) <= 3.66 && predY <= 2.44;
+      if (isInsideGoal) {
+        const dZ = Math.abs(predZ - player.mesh.position.z);
+        const diveReach = 1.95; // Courtois reach
+        const shotSpeed = this.ballVel.length();
+
+        // Top-corner screamer or extreme post driven shot beats Courtois!
+        const isCornerGoal = Math.abs(predZ) > 2.7 && dZ > 1.45;
+        const isUpper90 = predY > 2.0 && Math.abs(predZ) > 2.0;
+        const isRocket = shotSpeed > 36 && dZ > 1.4;
+
+        if (isCornerGoal || isUpper90 || isRocket) {
+          if (player.diveTimer <= 0) {
+            player.diveTimer = 0.8;
+            player.diveDir = predZ > player.mesh.position.z ? -1 : 1;
+          }
+        } else if (dZ <= diveReach && player.diveTimer <= 0) {
+          player.diveTimer = 0.7;
+          player.diveDir = predZ > player.mesh.position.z ? -1 : 1;
+
+          if (shotSpeed > 30) {
+            // Rebound deflection
+            this.ballVel.x = Math.max(10, -this.ballVel.x * 0.35);
+            this.ballVel.z += (Math.random() - 0.5) * 12.0;
+            this.ballVel.y = 2.5;
+            this.kickCooldown = 0.45;
+          } else {
+            // Caught clean
+            player.hasPossession = true;
+            this.ballVel.set(0, 0, 0);
+            this.kickCooldown = 0.4;
+          }
+          this.audio.playKick(0.7, 'normal');
+        }
+      }
+    }
+
+    this.updatePlayerLocomotion(player, dt, Math.abs(player.mesh.position.z - targetZ) > 0.1, 4.0);
+  }
+
+  // --- Home AI Carrier (when AI teammate has ball) ---
+  updateHomeCarrierAI(player, dt) {
+    // If match is in OUT_OF_BOUNDS state, hold position until PLAYING
+    if (this.matchManager && this.matchManager.state === MatchState.OUT_OF_BOUNDS) {
+      this.updatePlayerLocomotion(player, dt, false, 0);
+      return;
+    }
+
+    // Auto-switch user active control to teammate if they hold ball
+    if (this.activePlayer !== player) {
+      if (this.activePlayer) this.activePlayer.parts.selectionRing.material.opacity = 0;
+      this.activePlayer = player;
+      this.updateHUDPlayerCard();
+    }
+  }
+
+  // --- Opponent AI Main Router ---
+  updateOpponentAI(player, baseSlot, dt, isPressing) {
+    if (player.tackleCooldown > 0) player.tackleCooldown -= dt;
+    if (player.aiPassCooldown > 0) player.aiPassCooldown -= dt;
+    if (player.aiShotCooldown > 0) player.aiShotCooldown -= dt;
+
+    if (player.data.pos === 'GK') {
+      this.updateAwayGoalkeeperAI(player, dt);
+      return;
+    }
+
+    if (player.hasPossession) {
+      this.updateAwayCarrierAI(player, dt);
+      return;
+    }
+
+    const awayHasBall = this.awayPlayers.some(p => p.hasPossession);
+    if (awayHasBall) {
+      this.updateAwayAttackingSupportAI(player, baseSlot, dt);
+    } else {
+      this.updateAwayDefendingAI(player, baseSlot, dt, isPressing);
+    }
+  }
+
+  // --- Away Goalkeeper AI (Ederson / De Gea at X = 49.2) ---
+  updateAwayGoalkeeperAI(player, dt) {
+    if (player.hasPossession) {
+      player.distributionTimer = (player.distributionTimer || 0) + dt;
+      const fwd = new THREE.Vector3(-1, 0, 0);
+      this.ball.position.copy(player.mesh.position).add(fwd.multiplyScalar(0.9));
+      this.ball.position.y = this.ballRadius;
+      this.ballVel.set(0, 0, 0);
+
+      // If out of bounds, wait for state to return to PLAYING
+      if (this.matchManager && this.matchManager.state === MatchState.OUT_OF_BOUNDS) {
+        this.updatePlayerLocomotion(player, dt, false, 0);
+        return;
+      }
+
+      if (player.distributionTimer > 0.8) {
+        player.distributionTimer = 0;
+        this.executeAISetPiece(player, 'goal_kick', false);
+      }
+      this.updatePlayerLocomotion(player, dt, false, 0);
+      return;
+    }
+
+    // Dynamic angle bisector & arc positioning
+    const distBallX = THREE.MathUtils.clamp((50.0 - this.ball.position.x) / 100.0, 0, 1);
+    const targetX = 49.2 - Math.min(3.5, distBallX * 5.0);
+    const targetZ = THREE.MathUtils.clamp(this.ball.position.z * 0.62, -2.6, 2.6);
+
+    player.mesh.position.x = THREE.MathUtils.lerp(player.mesh.position.x, targetX, dt * 4.0);
+    player.mesh.position.z = THREE.MathUtils.lerp(player.mesh.position.z, targetZ, dt * 5.0);
+    player.mesh.rotation.y = -Math.PI / 2;
+
+    // 1v1 Rush Out: If user activePlayer breaks into box alone
+    if (this.activePlayer && this.activePlayer.hasPossession && this.activePlayer.mesh.position.x > 34 && Math.abs(this.activePlayer.mesh.position.z) < 14) {
+      const toCarrier = new THREE.Vector3().subVectors(this.activePlayer.mesh.position, player.mesh.position);
+      toCarrier.y = 0;
+      const d = toCarrier.length();
+      if (d < 4.5) {
+        toCarrier.normalize();
+        player.mesh.position.addScaledVector(toCarrier, 6.5 * dt);
+        if (d < 1.6 && player.diveTimer <= 0) {
+          player.diveTimer = 0.7;
+          player.diveDir = toCarrier.z > 0 ? 1 : -1;
+          this.activePlayer.hasPossession = false;
+          this.activePlayer.stumbleTimer = 0.5;
+          player.hasPossession = true;
+          this.audio.playTackle();
+        }
+      }
+    }
+
+    // Realistic GK Diving Saves & Concessions
+    const distToBall = player.mesh.position.distanceTo(this.ball.position);
+    const isShotComing = this.ballVel.x > 7.0 && this.ball.position.x > 28.0;
+
+    if (isShotComing && !this.isGoalSequence && distToBall < 4.0) {
+      const timeToGoal = Math.max(0.01, (50.0 - this.ball.position.x) / this.ballVel.x);
+      const predZ = this.ball.position.z + this.ballVel.z * timeToGoal;
+      const predY = Math.max(0, this.ball.position.y + this.ballVel.y * timeToGoal - 0.5 * 13.2 * timeToGoal * timeToGoal);
+
+      const isInsideGoal = Math.abs(predZ) <= 3.66 && predY <= 2.44;
+      if (isInsideGoal) {
+        const dZ = Math.abs(predZ - player.mesh.position.z);
+        const diveReach = 1.85; // Away GK reach
+        const shotSpeed = this.ballVel.length();
+
+        const isCornerGoal = Math.abs(predZ) > 2.6 && dZ > 1.35;
+        const isUpper90 = predY > 1.95 && Math.abs(predZ) > 2.1;
+        const isRocket = shotSpeed > 36 && dZ > 1.35;
+
+        if (isCornerGoal || isUpper90 || isRocket) {
+          if (player.diveTimer <= 0) {
+            player.diveTimer = 0.8;
+            player.diveDir = predZ > player.mesh.position.z ? 1 : -1;
+          }
+        } else if (dZ <= diveReach && player.diveTimer <= 0) {
+          player.diveTimer = 0.7;
+          player.diveDir = predZ > player.mesh.position.z ? 1 : -1;
+
+          if (shotSpeed > 30) {
+            this.ballVel.x = Math.min(-10, -this.ballVel.x * 0.35);
+            this.ballVel.z += (Math.random() - 0.5) * 12.0;
+            this.ballVel.y = 2.5;
+            this.kickCooldown = 0.45;
+          } else {
+            player.hasPossession = true;
+            this.ballVel.set(0, 0, 0);
+            this.kickCooldown = 0.4;
+          }
+          this.audio.playKick(0.75, 'normal');
+          this.audio.playCrowdGasp();
+        }
+      }
+    }
+
+    this.updatePlayerLocomotion(player, dt, Math.abs(player.mesh.position.z - targetZ) > 0.1, 4.0);
+  }
+
+  // --- Away Carrier AI: Authentic Dribbling, Passing & Lethal Shooting ---
+  updateAwayCarrierAI(player, dt) {
+    // If set piece is active, wait for PLAYING state then execute
+    if (this.matchManager && this.matchManager.state === MatchState.OUT_OF_BOUNDS) {
+      this.updatePlayerLocomotion(player, dt, false, 0);
+      return;
+    }
+
+    // Check if player is on corner spot or sideline for dead ball delivery
+    const isCornerFlag = player.mesh.position.x < -47.5 && Math.abs(player.mesh.position.z) > 29.0;
+    const isTouchline = Math.abs(player.mesh.position.z) > 31.0;
+    if (isCornerFlag) {
+      this.executeAISetPiece(player, 'corner', false);
+      return;
+    }
+    if (isTouchline) {
+      this.executeAISetPiece(player, 'throw_in', false);
+      return;
+    }
+
+    // Direction towards Home goal (-50, 0, 0)
+    let toGoal = new THREE.Vector3(-50.0, 0, 0).sub(player.mesh.position).normalize();
+
+    // Check for user/defender blocking path ahead
+    if (this.activePlayer) {
+      const toUser = new THREE.Vector3().subVectors(this.activePlayer.mesh.position, player.mesh.position);
+      const distUser = toUser.length();
+      if (distUser < 3.8 && toUser.x < 0) {
+        // Lateral evasion: cut diagonally left or right
+        const evadeZ = Math.sign(player.mesh.position.z - this.activePlayer.mesh.position.z || 1);
+        toGoal.z += evadeZ * 0.55;
+        toGoal.normalize();
+      }
+    }
+
+    const paceStat = player.data.pace || 80;
+    const speed = 7.4 + (paceStat / 100) * 1.8;
+
+    player.mesh.position.addScaledVector(toGoal, speed * dt);
+    player.mesh.rotation.y = Math.atan2(toGoal.x, toGoal.z);
+
+    // Natural foot dribble position
+    const fwd = new THREE.Vector3(Math.sin(player.mesh.rotation.y), 0, Math.cos(player.mesh.rotation.y));
+    this.ball.position.copy(player.mesh.position).add(fwd.multiplyScalar(0.95));
+    this.ball.position.y = this.ballRadius;
+    this.ballVel.set(0, 0, 0);
+
+    this.updatePlayerLocomotion(player, dt, true, speed);
+
+    // AI Tactical Decision Tick
+    player.aiDecisionTimer -= dt;
+    if (player.aiDecisionTimer <= 0) {
+      player.aiDecisionTimer = 0.22 + Math.random() * 0.2;
+
+      // 1. SHOOTING EVALUATION
+      const distToGoal = player.mesh.position.distanceTo(new THREE.Vector3(-50, 0, 0));
+      const shoStat = player.data.sho || 75;
+
+      // In the penalty box (< 20m)
+      if (player.mesh.position.x < -32 && Math.abs(player.mesh.position.z) < 18 && player.aiShotCooldown <= 0) {
+        if (Math.random() < 0.85) {
+          this.executeAIShot(player, false);
+          return;
+        }
+      }
+      // Outside the box (20-30m) with high shooting stat
+      else if (player.mesh.position.x < -22 && player.mesh.position.x >= -32 && Math.abs(player.mesh.position.z) < 16 && player.aiShotCooldown <= 0) {
+        if (shoStat >= 77 && Math.random() < 0.55) {
+          this.executeAIShot(player, false);
+          return;
+        }
+      }
+
+      // 2. PASSING & PLAYMAKING EVALUATION
+      // If closed down by user / defender (< 3.5m) OR in crossing zone OR teammate is in open space
+      let isUnderPressure = false;
+      if (this.activePlayer && this.activePlayer.mesh.position.distanceTo(player.mesh.position) < 3.6) {
+        isUnderPressure = true;
+      }
+
+      const inCrossingZone = player.mesh.position.x < -26 && Math.abs(player.mesh.position.z) > 12;
+
+      if ((isUnderPressure || inCrossingZone || Math.random() < 0.45) && player.aiPassCooldown <= 0) {
+        const bestPass = this.findBestAIPass(player, false);
+        if (bestPass) {
+          this.executeAIPass(player, false, bestPass);
+          return;
+        }
+      }
+    }
+  }
+
+  // --- Away Attacking Support AI: Dynamic Channel Runs & Passing Triangles ---
+  updateAwayAttackingSupportAI(player, baseSlot, dt) {
+    const carrier = this.awayPlayers.find(p => p.hasPossession);
+    const carrierPos = carrier ? carrier.mesh.position : new THREE.Vector3(0, 0, 0);
+
+    let advanceOffset = -8.0;
+    let lateralOffset = 0;
+
+    if (player.data.pos === 'ST') {
+      advanceOffset = -14.0; // Push deep into box
+      lateralOffset = (Math.random() - 0.5) * 4;
+    } else if (player.data.pos === 'RW' || player.data.pos === 'LW') {
+      advanceOffset = -10.0;
+      lateralOffset = Math.sign(baseSlot.z) * 3.5; // Stretch wide
+    } else if (player.data.pos === 'CAM') {
+      advanceOffset = -6.0;
+    }
+
+    const target = new THREE.Vector3(
+      baseSlot.x + this.ball.position.x * 0.35 + advanceOffset,
+      0,
+      baseSlot.z + this.ball.position.z * 0.25 + lateralOffset
     );
 
     const dir = new THREE.Vector3().subVectors(target, player.mesh.position);
@@ -4034,100 +4736,14 @@ class FootballGame {
       dir.normalize().multiplyScalar(7.2);
       player.mesh.position.addScaledVector(dir, dt);
       player.mesh.rotation.y = Math.atan2(dir.x, dir.z);
+      this.updatePlayerLocomotion(player, dt, isMoving, 7.2);
+    } else {
+      this.updatePlayerLocomotion(player, dt, false, 0);
     }
-
-    this.updatePlayerLocomotion(player, dt, isMoving, isMoving ? 7.2 : 0);
   }
 
-  updateOpponentAI(player, baseSlot, dt, isPressing) {
-    if (player.tackleCooldown > 0) {
-      player.tackleCooldown -= dt;
-    }
-
-    if (player.data.pos === 'GK') {
-      // Away GK (De Gea #1) patrols goal line at X = 49.2
-      const targetZ = THREE.MathUtils.clamp(this.ball.position.z * 0.55, -2.4, 2.4);
-      player.mesh.position.z = THREE.MathUtils.lerp(player.mesh.position.z, targetZ, dt * 4.0);
-      player.mesh.position.x = 49.2;
-
-      // Realistic GK Diving Saves & Concessions
-      const distToBall = player.mesh.position.distanceTo(this.ball.position);
-      const isShotComing = this.ballVel.x > 7.0 && this.ball.position.x > 36.0;
-
-      if (isShotComing && !this.isGoalSequence && distToBall < 3.0) {
-        const shotZ = this.ball.position.z;
-        const shotY = this.ball.position.y;
-        const dZ = Math.abs(shotZ - player.mesh.position.z);
-        const diveReach = 1.85; // De Gea reach
-
-        // Unstoppable corner strikes, side-netting rockets, or upper-90 goals beat the keeper!
-        const isCornerGoal = Math.abs(shotZ) > 2.6 && dZ > 1.35;
-        const isUpper90 = shotY > 1.95 && Math.abs(shotZ) > 2.1;
-        const isRocket = this.ballVel.length() > 38 && distToBall < 1.6;
-
-        if (isCornerGoal || isUpper90 || isRocket) {
-          // Keeper dives in desperation but CANNOT reach! Result: SPECTACULAR GOAL!
-          if (player.diveTimer <= 0) {
-            player.diveTimer = 0.8;
-            player.diveDir = shotZ > player.mesh.position.z ? 1 : -1;
-          }
-        } else if (dZ <= diveReach && player.diveTimer <= 0) {
-          // Keeper executes athletic dive and saves the ball!
-          player.diveTimer = 0.7;
-          player.diveDir = shotZ > player.mesh.position.z ? 1 : -1;
-          const shotSpeed = this.ballVel.length();
-
-          if (shotSpeed > 30) {
-            // Hard shot produces rebound deflection!
-            this.ballVel.x = Math.min(-10, -this.ballVel.x * 0.35);
-            this.ballVel.z += (Math.random() - 0.5) * 12.0;
-            this.ballVel.y = 2.5;
-          } else {
-            // Weak shot caught or parried safe
-            this.ballVel.x = -8.0;
-            this.ballVel.z = (Math.random() - 0.5) * 6.0;
-            this.ballVel.y = 1.0;
-          }
-          this.audio.playKick(0.75, 'normal');
-          this.audio.playCrowdGasp();
-          this.kickCooldown = 0.5;
-        }
-      }
-
-      this.updatePlayerLocomotion(player, dt, Math.abs(player.mesh.position.z - targetZ) > 0.1, 4.0);
-      return;
-    }
-
-    const distToBall = player.mesh.position.distanceTo(this.ball.position);
-
-    // If opponent has possession, advance towards Home goal
-    if (player.hasPossession) {
-      const toGoal = new THREE.Vector3(-50.0, 0, 0).sub(player.mesh.position).normalize();
-      player.mesh.position.addScaledVector(toGoal, 8.2 * dt);
-      player.mesh.rotation.y = Math.atan2(toGoal.x, toGoal.z);
-
-      const fwd = new THREE.Vector3(Math.sin(player.mesh.rotation.y), 0, Math.cos(player.mesh.rotation.y));
-      this.ball.position.copy(player.mesh.position).add(fwd.multiplyScalar(0.95));
-      this.ball.position.y = this.ballRadius;
-
-      this.updatePlayerLocomotion(player, dt, true, 8.2);
-
-      // Shoot if inside shooting zone
-      if (player.mesh.position.x < -20) {
-        player.hasPossession = false;
-        player.kickTimer = 0.35;
-        this.kickCooldown = 0.55;
-        const targetZ = (Math.random() - 0.5) * 4.5;
-        const shotAim = new THREE.Vector3(-50.0, 0, targetZ).sub(player.mesh.position).normalize();
-        this.ballVel.copy(shotAim).multiplyScalar(28);
-        this.ballVel.y = 1.6;
-        this.lastKicker = player;
-        this.audio.playKick(0.85, 'power');
-      }
-      return;
-    }
-
-    // Designated pressing defender: Closes down and executes tackles!
+  // --- Away Defending AI: Compact Zonal Shape & Smart Tackles ---
+  updateAwayDefendingAI(player, baseSlot, dt, isPressing) {
     if (isPressing) {
       const toBall = new THREE.Vector3().subVectors(this.ball.position, player.mesh.position);
       toBall.y = 0;
@@ -4138,29 +4754,25 @@ class FootballGame {
       player.mesh.rotation.y = Math.atan2(toBall.x, toBall.z);
 
       // AI STANDING TACKLE & INTERCEPTION MECHANIC:
-      if (dist < 1.6 && player.tackleCooldown <= 0) {
-        player.kickTimer = 0.3; // extend tackling leg
-        player.tackleCooldown = 1.1; // reset cooldown
+      if (dist < 1.65 && player.tackleCooldown <= 0) {
+        player.kickTimer = 0.3;
+        player.tackleCooldown = 1.1;
 
-        // Check if user is vulnerable (sprinting or facing away)
         const userVulnerable = this.isShiftDown || (this.activePlayer && this.activePlayer.hasPossession);
-
         if (userVulnerable) {
-          // DISPOSSESS USER!
           if (this.activePlayer) {
             this.activePlayer.hasPossession = false;
-            this.activePlayer.stumbleTimer = 0.45; // stagger user
+            this.activePlayer.stumbleTimer = 0.45;
           }
 
           this.audio.playTackle();
+          this.matchStats.awayTackles++;
 
-          // High DEF stat = cleanly won possession, otherwise loose deflected ball
           const defSkill = (player.data.def || 75) / 100;
           if (Math.random() < defSkill * 0.75) {
             player.hasPossession = true;
             this.kickCooldown = 0.3;
           } else {
-            // Loose ball bounces away
             const tackleBounce = toBall.clone().add(new THREE.Vector3(0, 0.2, (Math.random() - 0.5) * 0.8)).normalize();
             this.ballVel.copy(tackleBounce).multiplyScalar(14.0);
             this.kickCooldown = 0.4;
@@ -4170,11 +4782,11 @@ class FootballGame {
 
       this.updatePlayerLocomotion(player, dt, true, 8.0);
     } else {
-      // Hold 4-3-3 formation position
+      // Hold 4-3-3 formation position shifting with ball
       const target = new THREE.Vector3(
-        baseSlot.x + this.ball.position.x * 0.35,
+        baseSlot.x + this.ball.position.x * 0.38,
         0,
-        baseSlot.z + this.ball.position.z * 0.25
+        baseSlot.z + this.ball.position.z * 0.28
       );
       const dir = new THREE.Vector3().subVectors(target, player.mesh.position);
       const dist = dir.length();
@@ -4184,9 +4796,10 @@ class FootballGame {
         dir.normalize().multiplyScalar(6.5);
         player.mesh.position.addScaledVector(dir, dt);
         player.mesh.rotation.y = Math.atan2(dir.x, dir.z);
+        this.updatePlayerLocomotion(player, dt, isMoving, 6.5);
+      } else {
+        this.updatePlayerLocomotion(player, dt, false, 0);
       }
-
-      this.updatePlayerLocomotion(player, dt, isMoving, isMoving ? 6.5 : 0);
     }
   }
 
@@ -4840,6 +5453,18 @@ class FootballGame {
     this.awayScore = 0;
     this.matchMinute = 0;
     this.matchHalf = 1;
+    this.matchStats = {
+      homeShots: 0,
+      homeShotsOnTarget: 0,
+      awayShots: 0,
+      awayShotsOnTarget: 0,
+      homePasses: 0,
+      awayPasses: 0,
+      homePossessionTime: 0,
+      awayPossessionTime: 0,
+      homeTackles: 0,
+      awayTackles: 0
+    };
     document.getElementById('clock-display').textContent = '00:00';
     document.getElementById('half-display').textContent = '1. YARI';
 
