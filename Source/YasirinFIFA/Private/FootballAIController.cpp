@@ -39,55 +39,142 @@ void AFootballAIController::Tick(float DeltaTime)
 	}
 }
 
+AFootballPlayerCharacter* AFootballAIController::FindBestPassTarget()
+{
+	if (!ControlledFootballPlayer || !GetWorld()) return nullptr;
+
+	TArray<AActor*> FoundPlayers;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AFootballPlayerCharacter::StaticClass(), FoundPlayers);
+
+	AFootballPlayerCharacter* BestTarget = nullptr;
+	float BestScore = -9999.0f;
+	FVector PlayerPos = ControlledFootballPlayer->GetActorLocation();
+
+	for (AActor* Actor : FoundPlayers)
+	{
+		AFootballPlayerCharacter* Teammate = Cast<AFootballPlayerCharacter>(Actor);
+		if (!Teammate || Teammate == ControlledFootballPlayer || Teammate->bIsGoalkeeper) continue;
+		if (Teammate->bIsHomeTeam != ControlledFootballPlayer->bIsHomeTeam) continue;
+
+		FVector TeammatePos = Teammate->GetActorLocation();
+		float Dist = FVector::Dist(PlayerPos, TeammatePos);
+		if (Dist < 400.0f || Dist > 3800.0f) continue;
+
+		float ForwardProgress = ControlledFootballPlayer->bIsHomeTeam ? (TeammatePos.X - PlayerPos.X) : (PlayerPos.X - TeammatePos.X);
+
+		float ClosestOpponentDist = 9999.0f;
+		for (AActor* OpponentActor : FoundPlayers)
+		{
+			AFootballPlayerCharacter* Opponent = Cast<AFootballPlayerCharacter>(OpponentActor);
+			if (!Opponent || Opponent->bIsHomeTeam == ControlledFootballPlayer->bIsHomeTeam) continue;
+			float OppDist = FVector::Dist(TeammatePos, Opponent->GetActorLocation());
+			if (OppDist < ClosestOpponentDist) ClosestOpponentDist = OppDist;
+		}
+
+		float OpennessScore = FMath::Min(ClosestOpponentDist, 1000.0f);
+		float Score = ForwardProgress * 0.8f + OpennessScore * 0.6f - FMath::Abs(Dist - 1600.0f) * 0.2f;
+
+		if (Score > BestScore && ClosestOpponentDist > 300.0f)
+		{
+			BestScore = Score;
+			BestTarget = Teammate;
+		}
+	}
+
+	return BestTarget;
+}
+
+void AFootballAIController::ExecuteAIPass(AFootballPlayerCharacter* TargetTeammate)
+{
+	if (!ControlledFootballPlayer || !TargetTeammate || !GameBall) return;
+
+	FVector PasserPos = ControlledFootballPlayer->GetActorLocation();
+	FVector TargetPos = TargetTeammate->GetActorLocation();
+
+	float LeadX = ControlledFootballPlayer->bIsHomeTeam ? 250.0f : -250.0f;
+	FVector PassSpot = TargetPos + FVector(LeadX, FMath::RandRange(-80.0f, 80.0f), 0.0f);
+
+	FVector PassDir = (PassSpot - PasserPos).GetSafeNormal();
+	float Dist = FVector::Dist(PasserPos, PassSpot);
+	float PassForce = FMath::Clamp(Dist * 0.85f + 1200.0f, 1500.0f, 3200.0f);
+
+	ControlledFootballPlayer->ReleaseBallPossession();
+	GameBall->ApplyKick(PassDir, PassForce, 0.08f, FVector::ZeroVector, ControlledFootballPlayer);
+}
+
 void AFootballAIController::ExecuteOutfieldBehavior(float DeltaTime)
 {
 	FVector BallPos = GameBall->GetActorLocation();
 	FVector PlayerPos = ControlledFootballPlayer->GetActorLocation();
 	float DistToBall = FVector::Dist(PlayerPos, BallPos);
 
+	float TargetGoalX = ControlledFootballPlayer->bIsHomeTeam ? PitchHalfLengthCm : -PitchHalfLengthCm;
+	FVector OpponentGoalPos = FVector(TargetGoalX, 0.0f, 0.0f);
+	float DistToGoal = FVector::Dist(PlayerPos, OpponentGoalPos);
+
 	// If player has ball possession
 	if (ControlledFootballPlayer->bHasBallPossession)
 	{
-		// Advance towards opponent goal
-		float TargetGoalX = ControlledFootballPlayer->bIsHomeTeam ? PitchHalfLengthCm : -PitchHalfLengthCm;
-		FVector OpponentGoalPos = FVector(TargetGoalX, 0.0f, 0.0f);
-		FVector MoveDir = (OpponentGoalPos - PlayerPos).GetSafeNormal();
-
-		ControlledFootballPlayer->AddMovementInput(MoveDir, 1.0f);
-
-		// If within shooting range, take a shot
-		float DistToGoal = FVector::Dist(PlayerPos, OpponentGoalPos);
-		if (DistToGoal < 2400.0f)
+		// 1. Shoot if in range
+		if (DistToGoal < 2600.0f)
 		{
-			FVector ShotDir = (OpponentGoalPos + FVector(0, FMath::RandRange(-200.0f, 200.0f), 80.0f) - PlayerPos).GetSafeNormal();
+			float TargetY = (FMath::FRand() < 0.5f ? 1.0f : -1.0f) * FMath::RandRange(150.0f, GoalHalfWidthCm - 50.0f);
+			float TargetZ = FMath::RandRange(40.0f, 200.0f);
+			FVector ShotTarget = FVector(TargetGoalX, TargetY, TargetZ);
+
+			FVector ShotDir = (ShotTarget - PlayerPos).GetSafeNormal();
+			float ShotForce = FMath::RandRange(2400.0f, 3200.0f);
+			FVector CurveSpin = FVector(0.0f, TargetY > 0.0f ? 80.0f : -80.0f, 0.0f);
+
 			ControlledFootballPlayer->ReleaseBallPossession();
-			GameBall->ApplyKick(ShotDir, FMath::RandRange(2000.0f, 2900.0f), 0.20f, FVector::ZeroVector, ControlledFootballPlayer);
+			GameBall->ApplyKick(ShotDir, ShotForce, 0.18f, CurveSpin, ControlledFootballPlayer);
+			return;
 		}
+
+		// 2. Scan for pass opportunity if under pressure or building up play
+		bool bShouldPass = (FMath::FRand() < 0.03f) || (DistToGoal > 3500.0f && FMath::FRand() < 0.05f);
+		if (bShouldPass)
+		{
+			AFootballPlayerCharacter* PassTarget = FindBestPassTarget();
+			if (PassTarget)
+			{
+				ExecuteAIPass(PassTarget);
+				return;
+			}
+		}
+
+		// 3. Dribble towards opponent goal
+		FVector MoveDir = (OpponentGoalPos - PlayerPos).GetSafeNormal();
+		ControlledFootballPlayer->AddMovementInput(MoveDir, 1.0f);
 		return;
 	}
 
 	// Calculate tactical dynamic position based on ball position and base formation
 	FVector DynamicTargetPos = FormationBasePosition;
-	// Dynamic shifting with ball movement
 	DynamicTargetPos.X += BallPos.X * 0.45f;
 	DynamicTargetPos.Y += BallPos.Y * 0.35f;
+
+	// Make offensive runs when team has ball
+	if (ControlledFootballPlayer->bIsHomeTeam == (BallPos.X < 0.0f))
+	{
+		float OffensiveRunOffset = ControlledFootballPlayer->bIsHomeTeam ? 600.0f : -600.0f;
+		DynamicTargetPos.X += OffensiveRunOffset;
+	}
 
 	// Clamp to pitch
 	DynamicTargetPos.X = FMath::Clamp(DynamicTargetPos.X, -PitchHalfLengthCm + 400.0f, PitchHalfLengthCm - 400.0f);
 	DynamicTargetPos.Y = FMath::Clamp(DynamicTargetPos.Y, -PitchHalfWidthCm + 300.0f, PitchHalfWidthCm - 300.0f);
 
-	// If ball is very close and uncontested, press to win the ball
-	if (DistToBall < 750.0f)
+	// Press if ball is close
+	if (DistToBall < 850.0f)
 	{
 		FVector ToBall = (BallPos - PlayerPos).GetSafeNormal();
 		ControlledFootballPlayer->AddMovementInput(ToBall, 1.0f);
 
-		// Ball acquisition
 		if (DistToBall < 110.0f)
 		{
 			ControlledFootballPlayer->ClaimBallPossession(GameBall);
 		}
-		// Opportunistic slide tackle
 		else if (DistToBall < 350.0f && FMath::FRand() < 0.02f)
 		{
 			ControlledFootballPlayer->PerformSlideTackle();
@@ -95,7 +182,6 @@ void AFootballAIController::ExecuteOutfieldBehavior(float DeltaTime)
 	}
 	else
 	{
-		// Move towards tactical formation spot
 		FVector ToFormation = (DynamicTargetPos - PlayerPos);
 		if (ToFormation.Size() > 180.0f)
 		{

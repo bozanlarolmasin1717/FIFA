@@ -2978,21 +2978,29 @@ class FootballGame {
     if (this.passReceiver && this.passReceiver !== this.activePlayer) {
       const toBall = new THREE.Vector3().subVectors(this.ball.position, this.passReceiver.mesh.position);
       toBall.y = 0;
-      if (toBall.length() > 0.4) {
-        toBall.normalize().multiplyScalar(8.0 * dt);
-        this.passReceiver.mesh.position.add(toBall);
+      const distToBall = toBall.length();
+      if (distToBall > 0.3) {
+        toBall.normalize();
+        this.passReceiver.mesh.position.addScaledVector(toBall, 8.5 * dt);
+        this.passReceiver.mesh.rotation.y = Math.atan2(toBall.x, toBall.z);
+        this.updatePlayerLocomotion(this.passReceiver, dt, true, 8.5);
       }
 
       const distToReceiver = this.ball.position.distanceTo(this.passReceiver.mesh.position);
       if (distToReceiver < 2.0) {
-        if (this.activePlayer) this.activePlayer.parts.selectionRing.material.opacity = 0;
-        this.activePlayer = this.passReceiver;
-        this.activePlayer.hasPossession = true;
+        const isHomePlayer = this.homePlayers.includes(this.passReceiver);
+        if (isHomePlayer) {
+          if (this.activePlayer) this.activePlayer.parts.selectionRing.material.opacity = 0;
+          this.activePlayer = this.passReceiver;
+          this.activePlayer.hasPossession = true;
+          this.updateHUDPlayerCard();
+        } else {
+          this.passReceiver.hasPossession = true;
+        }
         this.passReceiver = null;
         this.kickCooldown = 0.15;
         // Soft first touch cushion
         this.ballVel.multiplyScalar(0.2);
-        this.updateHUDPlayerCard();
       }
     }
 
@@ -3477,12 +3485,17 @@ class FootballGame {
       return;
     }
 
-    // Proactive attacking runs when user has possession
-    const attackOffset = this.activePlayer && this.activePlayer.hasPossession ? 9.0 : 0.0;
+    // Proactive dynamic attacking runs when home team has possession
+    const isAttacking = this.activePlayer && this.activePlayer.hasPossession;
+    let attackOffset = isAttacking ? 10.0 : 0.0;
+    let spreadZ = 0;
+    if (player.data.pos === 'FWD') attackOffset += 6.0;
+    if (player.data.pos === 'MID') spreadZ = (baseSlot.z > 0 ? 3.0 : -3.0);
+
     const target = new THREE.Vector3(
       baseSlot.x + this.ball.position.x * 0.35 + attackOffset,
       0,
-      baseSlot.z + this.ball.position.z * 0.25
+      baseSlot.z + this.ball.position.z * 0.25 + spreadZ
     );
 
     const dir = new THREE.Vector3().subVectors(target, player.mesh.position);
@@ -3496,6 +3509,111 @@ class FootballGame {
     }
 
     this.updatePlayerLocomotion(player, dt, isMoving, isMoving ? 7.2 : 0);
+  }
+
+  executeOpponentAIPossession(player, dt) {
+    const pPos = player.mesh.position;
+    const homeGoal = new THREE.Vector3(-50.0, 0, 0);
+    const distToGoal = pPos.distanceTo(homeGoal);
+
+    // 1. Check for nearby defenders pressing
+    let nearestDefenderDist = 999;
+    this.homePlayers.forEach(def => {
+      const d = def.mesh.position.distanceTo(pPos);
+      if (d < nearestDefenderDist) nearestDefenderDist = d;
+    });
+
+    // 2. SHOOTING DECISION: If close to goal (X < -18 or distToGoal < 32)
+    if (pPos.x < -18 && this.kickCooldown <= 0) {
+      player.hasPossession = false;
+      player.kickTimer = 0.35;
+      this.kickCooldown = 0.55;
+
+      const targetZ = (Math.random() < 0.5 ? -1 : 1) * (1.8 + Math.random() * 1.4);
+      const isPowerShot = Math.random() < 0.6;
+      const targetY = isPowerShot ? (0.8 + Math.random() * 1.4) : (0.2 + Math.random() * 0.8);
+
+      const shotAim = new THREE.Vector3(-50.0 - pPos.x, targetY, targetZ - pPos.z).normalize();
+      const shotSpeed = isPowerShot ? (28 + Math.random() * 8) : (24 + Math.random() * 6);
+
+      this.ballVel.copy(shotAim).multiplyScalar(shotSpeed);
+      this.ballVel.y = targetY;
+      this.ballSpin.set((Math.random() - 0.5) * 2, (targetZ > pPos.z ? 1 : -1) * 8.0, 0);
+      this.lastKicker = player;
+      this.audio.playKick(0.85, isPowerShot ? 'power' : 'finesse');
+      return;
+    }
+
+    // 3. PASSING DECISION: If under pressure OR in build-up phase (x > -15), evaluate pass options
+    const shouldPass = (nearestDefenderDist < 4.0 || pPos.x > -15) && Math.random() < 0.35 && this.kickCooldown <= 0;
+
+    if (shouldPass) {
+      let bestReceiver = null;
+      let bestScore = -999;
+
+      this.awayPlayers.forEach(mate => {
+        if (mate === player || mate.data.pos === 'GK') return;
+        const mPos = mate.mesh.position;
+        const toMate = new THREE.Vector3().subVectors(mPos, pPos);
+        const dist = toMate.length();
+        if (dist < 6.0 || dist > 38.0) return;
+
+        const forwardProgress = pPos.x - mPos.x;
+        let defenderDist = 999;
+        this.homePlayers.forEach(hp => {
+          const hd = hp.mesh.position.distanceTo(mPos);
+          if (hd < defenderDist) defenderDist = hd;
+        });
+
+        const openness = Math.min(defenderDist, 10.0);
+        const score = forwardProgress * 0.6 + openness * 0.8 - Math.abs(dist - 16.0) * 0.2;
+
+        if (score > bestScore && defenderDist > 2.5) {
+          bestScore = score;
+          bestReceiver = mate;
+        }
+      });
+
+      if (bestReceiver) {
+        player.hasPossession = false;
+        player.kickTimer = 0.3;
+        this.kickCooldown = 0.4;
+        this.passReceiver = bestReceiver;
+
+        const toReceiver = new THREE.Vector3().subVectors(bestReceiver.mesh.position, pPos);
+        const passDist = toReceiver.length();
+        const leadVector = new THREE.Vector3(-3.0, 0, (Math.random() - 0.5) * 2.0);
+        const passTarget = bestReceiver.mesh.position.clone().add(leadVector);
+
+        const passAim = new THREE.Vector3().subVectors(passTarget, pPos).normalize();
+        const passForce = Math.min(32, Math.max(18, passDist * 1.25 + 6.0));
+
+        this.ballVel.copy(passAim).multiplyScalar(passForce);
+        this.ballVel.y = 0.1;
+        this.lastKicker = player;
+        this.audio.playKick(0.7, 'normal');
+        return;
+      }
+    }
+
+    // 4. DRIBBLE / ADVANCE DECISION: Advance towards goal or open space
+    const toGoal = new THREE.Vector3(-50.0, 0, 0).sub(pPos).normalize();
+    this.homePlayers.forEach(def => {
+      const d = def.mesh.position.distanceTo(pPos);
+      if (d < 3.0) {
+        const awayFromDef = new THREE.Vector3().subVectors(pPos, def.mesh.position).normalize();
+        toGoal.addScaledVector(awayFromDef, 0.45).normalize();
+      }
+    });
+
+    player.mesh.position.addScaledVector(toGoal, 8.2 * dt);
+    player.mesh.rotation.y = Math.atan2(toGoal.x, toGoal.z);
+
+    const fwd = new THREE.Vector3(Math.sin(player.mesh.rotation.y), 0, Math.cos(player.mesh.rotation.y));
+    this.ball.position.copy(player.mesh.position).add(fwd.multiplyScalar(0.95));
+    this.ball.position.y = this.ballRadius;
+
+    this.updatePlayerLocomotion(player, dt, true, 8.2);
   }
 
   updateOpponentAI(player, baseSlot, dt, isPressing) {
@@ -3525,24 +3643,20 @@ class FootballGame {
         const isRocket = this.ballVel.length() > 38 && distToBall < 1.6;
 
         if (isCornerGoal || isUpper90 || isRocket) {
-          // Keeper dives in desperation but CANNOT reach! Result: SPECTACULAR GOAL!
           if (player.diveTimer <= 0) {
             player.diveTimer = 0.8;
             player.diveDir = shotZ > player.mesh.position.z ? 1 : -1;
           }
         } else if (dZ <= diveReach && player.diveTimer <= 0) {
-          // Keeper executes athletic dive and saves the ball!
           player.diveTimer = 0.7;
           player.diveDir = shotZ > player.mesh.position.z ? 1 : -1;
           const shotSpeed = this.ballVel.length();
 
           if (shotSpeed > 30) {
-            // Hard shot produces rebound deflection!
             this.ballVel.x = Math.min(-10, -this.ballVel.x * 0.35);
             this.ballVel.z += (Math.random() - 0.5) * 12.0;
             this.ballVel.y = 2.5;
           } else {
-            // Weak shot caught or parried safe
             this.ballVel.x = -8.0;
             this.ballVel.z = (Math.random() - 0.5) * 6.0;
             this.ballVel.y = 1.0;
@@ -3559,30 +3673,9 @@ class FootballGame {
 
     const distToBall = player.mesh.position.distanceTo(this.ball.position);
 
-    // If opponent has possession, advance towards Home goal
+    // Dynamic AI Possession & Build-Up Play (Passing, Dribbling, Shooting)
     if (player.hasPossession) {
-      const toGoal = new THREE.Vector3(-50.0, 0, 0).sub(player.mesh.position).normalize();
-      player.mesh.position.addScaledVector(toGoal, 8.2 * dt);
-      player.mesh.rotation.y = Math.atan2(toGoal.x, toGoal.z);
-
-      const fwd = new THREE.Vector3(Math.sin(player.mesh.rotation.y), 0, Math.cos(player.mesh.rotation.y));
-      this.ball.position.copy(player.mesh.position).add(fwd.multiplyScalar(0.95));
-      this.ball.position.y = this.ballRadius;
-
-      this.updatePlayerLocomotion(player, dt, true, 8.2);
-
-      // Shoot if inside shooting zone
-      if (player.mesh.position.x < -20) {
-        player.hasPossession = false;
-        player.kickTimer = 0.35;
-        this.kickCooldown = 0.55;
-        const targetZ = (Math.random() - 0.5) * 4.5;
-        const shotAim = new THREE.Vector3(-50.0, 0, targetZ).sub(player.mesh.position).normalize();
-        this.ballVel.copy(shotAim).multiplyScalar(28);
-        this.ballVel.y = 1.6;
-        this.lastKicker = player;
-        this.audio.playKick(0.85, 'power');
-      }
+      this.executeOpponentAIPossession(player, dt);
       return;
     }
 

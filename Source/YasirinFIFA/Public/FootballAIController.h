@@ -40,6 +40,8 @@ public:
 private:
 	void ExecuteOutfieldBehavior(float DeltaTime);
 	void ExecuteGoalkeeperBehavior(float DeltaTime);
+	AFootballPlayerCharacter* FindBestPassTarget();
+	void ExecuteAIPass(AFootballPlayerCharacter* TargetTeammate);
 
 	// Pitch boundaries
 	const float PitchHalfLengthCm = 5250.0f;
