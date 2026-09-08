@@ -4,7 +4,8 @@ const path = require('path');
 const { execSync } = require('child_process');
 
 const rootDir = path.join(__dirname, '..');
-const artifactDir = 'C:\\Users\\bozan\\.gemini\\antigravity\\brain\\6e4acaaf-120c-4ac3-9f74-cd9e3784d759';
+const artifactDir = 'C:\\Users\\bozan\\.gemini\\antigravity\\brain\\23579926-f21f-40f2-bf9b-b1494fdec93e';
+if (!fs.existsSync(artifactDir)) fs.mkdirSync(artifactDir, { recursive: true });
 const tempDir = 'C:\\Users\\bozan\\AppData\\Local\\Temp';
 const PORT = 3847;
 
