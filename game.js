@@ -201,6 +201,370 @@ let PLAYER_DATABASE = {
   benchAway: TEAMS_DATABASE.al_nassr.bench
 };
 
+// =========================================================================
+// GAMEPLAY & PHYSICS ARCHITECTURE MODULES
+// =========================================================================
+
+/**
+ * GameplayEventDispatcher
+ * Manages game events for rules, statistics, and game state systems.
+ * Supports:
+ * - OnBallPassed(player, power, target)
+ * - OnShotTaken(player, power, direction)
+ * - OnBallEnteredTrigger(triggerZoneName)
+ */
+class GameplayEventDispatcher {
+  constructor(game) {
+    this.game = game;
+    this.listeners = new Map();
+  }
+
+  on(eventName, callback) {
+    if (!this.listeners.has(eventName)) {
+      this.listeners.set(eventName, new Set());
+    }
+    this.listeners.get(eventName).add(callback);
+    return () => this.off(eventName, callback);
+  }
+
+  addListener(eventName, callback) {
+    return this.on(eventName, callback);
+  }
+
+  off(eventName, callback) {
+    if (this.listeners.has(eventName)) {
+      this.listeners.get(eventName).delete(callback);
+    }
+  }
+
+  removeListener(eventName, callback) {
+    this.off(eventName, callback);
+  }
+
+  emit(eventName, ...args) {
+    // 1. Notify internal subscribers
+    if (this.listeners.has(eventName)) {
+      this.listeners.get(eventName).forEach(cb => {
+        try {
+          cb(...args);
+        } catch (err) {
+          console.error(`[EventDispatcher Error in ${eventName}]:`, err);
+        }
+      });
+    }
+
+    // 2. Dispatch browser CustomEvent on window for decoupled modules
+    if (typeof window !== 'undefined' && window.dispatchEvent) {
+      try {
+        let detail = {};
+        if (eventName === 'OnBallPassed') {
+          detail = { player: args[0], power: args[1], target: args[2] };
+        } else if (eventName === 'OnShotTaken') {
+          detail = { player: args[0], power: args[1], direction: args[2] };
+        } else if (eventName === 'OnBallEnteredTrigger') {
+          detail = { triggerZoneName: args[0] };
+        } else {
+          detail = { args };
+        }
+        window.dispatchEvent(new CustomEvent(eventName, { detail }));
+      } catch (e) {}
+    }
+  }
+}
+
+/**
+ * PitchTriggerZoneSystem
+ * Monitors pitch trigger zones (Penalty boxes, 6-yard boxes, center circle, thirds, goal mouths, sidelines)
+ * and dispatches OnBallEnteredTrigger(zoneName) when ball enters a zone.
+ */
+class PitchTriggerZoneSystem {
+  constructor(eventDispatcher) {
+    this.events = eventDispatcher;
+    this.activeZones = new Set();
+
+    // Standard football pitch trigger zones (field: 100m length x 64m width, goals at X: +/-50.0)
+    this.zones = [
+      {
+        name: 'CenterCircle',
+        contains: (pos) => (pos.x * pos.x + pos.z * pos.z) <= (9.15 * 9.15)
+      },
+      {
+        name: 'PenaltyBoxHome',
+        contains: (pos) => (pos.x >= -50.0 && pos.x <= -33.5 && Math.abs(pos.z) <= 20.15)
+      },
+      {
+        name: 'PenaltyBoxAway',
+        contains: (pos) => (pos.x >= 33.5 && pos.x <= 50.0 && Math.abs(pos.z) <= 20.15)
+      },
+      {
+        name: 'GoalAreaHome',
+        contains: (pos) => (pos.x >= -50.0 && pos.x <= -44.5 && Math.abs(pos.z) <= 9.15)
+      },
+      {
+        name: 'GoalAreaAway',
+        contains: (pos) => (pos.x >= 44.5 && pos.x <= 50.0 && Math.abs(pos.z) <= 9.15)
+      },
+      {
+        name: 'FinalThirdHome',
+        contains: (pos) => (pos.x >= -50.0 && pos.x < -16.6 && Math.abs(pos.z) <= 32.0)
+      },
+      {
+        name: 'MiddleThird',
+        contains: (pos) => (pos.x >= -16.6 && pos.x <= 16.6 && Math.abs(pos.z) <= 32.0)
+      },
+      {
+        name: 'FinalThirdAway',
+        contains: (pos) => (pos.x > 16.6 && pos.x <= 50.0 && Math.abs(pos.z) <= 32.0)
+      },
+      {
+        name: 'GoalHome',
+        contains: (pos) => (pos.x < -50.0 && Math.abs(pos.z) <= 3.66 && pos.y <= 2.44)
+      },
+      {
+        name: 'GoalAway',
+        contains: (pos) => (pos.x > 50.0 && Math.abs(pos.z) <= 3.66 && pos.y <= 2.44)
+      },
+      {
+        name: 'TouchlineTop',
+        contains: (pos) => (pos.z < -32.0)
+      },
+      {
+        name: 'TouchlineBottom',
+        contains: (pos) => (pos.z > 32.0)
+      },
+      {
+        name: 'GoalLineHome',
+        contains: (pos) => (pos.x < -50.0 && Math.abs(pos.z) > 3.66)
+      },
+      {
+        name: 'GoalLineAway',
+        contains: (pos) => (pos.x > 50.0 && Math.abs(pos.z) > 3.66)
+      }
+    ];
+  }
+
+  update(ballPos) {
+    if (!ballPos) return;
+    const currentZones = new Set();
+
+    for (let i = 0; i < this.zones.length; i++) {
+      const z = this.zones[i];
+      if (z.contains(ballPos)) {
+        currentZones.add(z.name);
+        if (!this.activeZones.has(z.name)) {
+          // Entered new trigger zone
+          this.events.emit('OnBallEnteredTrigger', z.name);
+          if (this.events.game && typeof this.events.game.onBallEnteredTrigger === 'function') {
+            this.events.game.onBallEnteredTrigger(z.name);
+          }
+        }
+      }
+    }
+
+    this.activeZones = currentZones;
+  }
+}
+
+/**
+ * PlayerLocomotionEngine
+ * Handles 8-directional movement, acceleration curves, sprint transitions,
+ * stamina dynamics, and the critical speed difference between running with vs without the ball.
+ */
+class PlayerLocomotionEngine {
+  constructor(game) {
+    this.game = game;
+    // Acceleration constants (m/s²)
+    this.accelRateNormal = 28.0;
+    this.accelRateSprint = 22.0;
+    this.brakingDecelRate = 34.0;
+    this.rotationLerpSpeed = 16.0;
+  }
+
+  /**
+   * Calculates maximum speed taking into account:
+   * 1. Player pace and dribbling attributes
+   * 2. Possession state: on-ball vs off-ball speed difference
+   * 3. Sprinting vs normal jog state
+   */
+  calculateMaxSpeed(player, isSprinting) {
+    const pace = player.data.pace || 80;
+    const dri = player.data.dri || 80;
+    const hasBall = !!player.hasPossession;
+
+    if (hasBall) {
+      // Toplu Koşu: Dribling sırasında ayak temasları ve top kontrolü nedeniyle hız ~18-20% daha düşüktür
+      if (isSprinting) {
+        // Sprint with ball: ~11.6 m/s base scaled by pace & dribbling stats
+        return 11.6 * ((pace * 0.6 + dri * 0.4) / 80.0);
+      } else {
+        // Jog with ball: ~7.2 m/s base
+        return 7.2 * ((pace * 0.5 + dri * 0.5) / 80.0);
+      }
+    } else {
+      // Topsuz Koşu: Serbest koşu ve topsuz depar çok daha çevik ve hızlıdır
+      if (isSprinting) {
+        // Sprint without ball: ~14.8 m/s base scaled by pace
+        return 14.8 * (pace / 80.0);
+      } else {
+        // Jog without ball: ~8.8 m/s base
+        return 8.8 * (pace / 80.0);
+      }
+    }
+  }
+
+  /**
+   * Updates player movement with 8-directional input, acceleration, and inertia
+   */
+  updatePlayerMovement(player, inputDir, isShiftDown, dt) {
+    if (!player) return { isMoving: false, isSprinting: false, currentSpeed: 0 };
+
+    if (!player.vel) {
+      player.vel = new THREE.Vector3();
+    }
+
+    // 1. Sprint & Stamina Mechanics
+    const canSprint = isShiftDown && player.stamina > 5.0;
+    const isSprinting = canSprint && inputDir.lengthSq() > 0.01;
+
+    if (isSprinting) {
+      player.stamina = Math.max(0, player.stamina - dt * 14.0);
+    } else {
+      // Stamina recovers when jogging, walking, or standing
+      player.stamina = Math.min(100.0, player.stamina + dt * 5.0);
+    }
+
+    // Update HUD stamina if active player
+    if (player === this.game.activePlayer) {
+      const stamFill = document.getElementById('hud-stamina-fill');
+      if (stamFill) stamFill.style.width = `${player.stamina}%`;
+    }
+
+    // 2. 8-Directional Normalized Input
+    const hasInput = inputDir.lengthSq() > 0.001;
+    let targetVelocity = new THREE.Vector3();
+
+    if (hasInput) {
+      const normDir = inputDir.clone().normalize();
+      const maxSpeed = this.calculateMaxSpeed(player, isSprinting);
+      targetVelocity.copy(normDir).multiplyScalar(maxSpeed);
+
+      // Smooth acceleration towards target velocity
+      const accelRate = isSprinting ? this.accelRateSprint : this.accelRateNormal;
+      const alpha = Math.min(1.0, dt * accelRate);
+      player.vel.lerp(targetVelocity, alpha);
+    } else {
+      // Braking / dynamic friction deceleration
+      const brakeAlpha = Math.min(1.0, dt * this.brakingDecelRate);
+      player.vel.lerp(new THREE.Vector3(0, 0, 0), brakeAlpha);
+      if (player.vel.lengthSq() < 0.04) {
+        player.vel.set(0, 0, 0);
+      }
+    }
+
+    // 3. Apply Velocity to Position
+    player.mesh.position.addScaledVector(player.vel, dt);
+    player.speed = player.vel.length();
+
+    // 4. Smooth Weighted Rotation along movement direction
+    if (player.speed > 0.25) {
+      const targetRotY = Math.atan2(player.vel.x, player.vel.z);
+      let diff = targetRotY - player.mesh.rotation.y;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      player.mesh.rotation.y += diff * Math.min(1.0, dt * this.rotationLerpSpeed);
+    }
+
+    return {
+      isMoving: player.speed > 0.2,
+      isSprinting: isSprinting,
+      currentSpeed: player.speed
+    };
+  }
+}
+
+/**
+ * BallPhysicsEngine
+ * Handles aerodynamic quadratic drag, Magnus lift/curl,
+ * turf ground rolling resistance, restitution bounces with spin transfer, and goal post collisions.
+ */
+class BallPhysicsEngine {
+  constructor(game) {
+    this.game = game;
+    this.gravity = 13.2; // m/s² natural snappiness for 3D football
+    this.airDragCoeff = 0.0012;
+    this.magnusScale = 0.0042;
+    this.bounceRestitution = 0.58; // FIFA soccer ball elasticity on manicured grass
+    this.turfRollingDecel = 3.8; // m/s² natural ground friction deceleration
+  }
+
+  update(ball, ballVel, ballSpin, dt) {
+    if (!ball) return;
+
+    // 1. Aerodynamic Magnus Force (Curves trajectory in air)
+    if (ballSpin.lengthSq() > 0.01) {
+      const magnus = new THREE.Vector3().crossVectors(ballSpin, ballVel).multiplyScalar(this.magnusScale);
+      ballVel.addScaledVector(magnus, dt);
+      ballSpin.multiplyScalar(Math.pow(0.965, dt * 60)); // Natural spin decay
+    }
+
+    // 2. Aerodynamic Quadratic Air Drag
+    const speed = ballVel.length();
+    if (speed > 0.05) {
+      const dragFactor = Math.min(0.25, this.airDragCoeff * speed);
+      ballVel.addScaledVector(ballVel, -dragFactor * dt);
+    }
+
+    // 3. Gravity Acceleration
+    ballVel.y -= this.gravity * dt;
+
+    // 4. Velocity Position Integration
+    ball.position.addScaledVector(ballVel, dt);
+
+    // 5. Ground Contact, Bounce Restitution & Rolling Friction
+    if (ball.position.y <= this.game.ballRadius) {
+      ball.position.y = this.game.ballRadius;
+
+      // Vertical bounce
+      if (Math.abs(ballVel.y) > 0.65) {
+        ballVel.y = -ballVel.y * this.bounceRestitution;
+        // Spin-to-ground impulse transfer (topspin accelerates, backspin checks up)
+        ballVel.x += ballSpin.z * 0.06;
+        ballVel.z -= ballSpin.x * 0.06;
+        ballSpin.multiplyScalar(0.72); // Impact dampens spin
+      } else {
+        ballVel.y = 0;
+      }
+
+      // Turf Ground Rolling Friction (Manicured pitch friction)
+      const groundSpeed = Math.sqrt(ballVel.x * ballVel.x + ballVel.z * ballVel.z);
+      if (groundSpeed > 0.04) {
+        const newSpeed = Math.max(0, groundSpeed - this.turfRollingDecel * dt);
+        const frictionRatio = newSpeed / groundSpeed;
+        ballVel.x *= frictionRatio;
+        ballVel.z *= frictionRatio;
+      } else {
+        ballVel.x = 0;
+        ballVel.z = 0;
+      }
+    }
+
+    // 6. Realistic Angular Rolling Rotation
+    const rollingSpeed = Math.sqrt(ballVel.x * ballVel.x + ballVel.z * ballVel.z);
+    if (rollingSpeed > 0.04) {
+      ball.rotation.x += (ballVel.z / this.game.ballRadius) * dt;
+      ball.rotation.z -= (ballVel.x / this.game.ballRadius) * dt;
+    }
+  }
+}
+
+// Export for module accessibility
+if (typeof window !== 'undefined') {
+  window.GameplayEventDispatcher = GameplayEventDispatcher;
+  window.PitchTriggerZoneSystem = PitchTriggerZoneSystem;
+  window.PlayerLocomotionEngine = PlayerLocomotionEngine;
+  window.BallPhysicsEngine = BallPhysicsEngine;
+}
+
 // --- Main Game Engine ---
 class FootballGame {
   constructor() {
@@ -313,10 +677,32 @@ class FootballGame {
     this.menuCamAngle = 0;
     this.currentCardFilter = { team: 'all', pos: 'all', tier: 'all', search: '' };
 
+    // Initialize Modular Gameplay, Physics & Event Systems
+    this.events = new GameplayEventDispatcher(this);
+    this.triggerZones = new PitchTriggerZoneSystem(this.events);
+    this.locomotionEngine = new PlayerLocomotionEngine(this);
+    this.ballPhysicsEngine = new BallPhysicsEngine(this);
+
     this.initWorld();
     this.initInput();
     this.initUI();
     this.animate();
+  }
+
+  // --- Gameplay Event Hooks (Extensible for rules, stats, commentary, referee) ---
+  onBallPassed(player, power, target) {
+    // Extensible hook for pass statistics, reception triggers, and offside validation
+    // console.log(`[Event] OnBallPassed: ${player?.data?.name || 'Player'}, Power: ${(power * 100).toFixed(0)}%`);
+  }
+
+  onShotTaken(player, power, direction) {
+    // Extensible hook for shot telemetry, xG calculation, and goalkeeper reaction triggers
+    // console.log(`[Event] OnShotTaken: ${player?.data?.name || 'Player'}, Power: ${(power * 100).toFixed(0)}%`);
+  }
+
+  onBallEnteredTrigger(triggerZoneName) {
+    // Extensible hook for offside zones, penalty area fouls, goal-line technology
+    // console.log(`[Event] OnBallEnteredTrigger: ${triggerZoneName}`);
   }
 
   // --- World Creation (Pitch, Stadium, Floodlights, Goals) ---
@@ -1632,6 +2018,7 @@ class FootballGame {
     let shotKmh = 0;
     let spinY = 0;
     let kickSoundType = 'normal';
+    let kickTarget = null;
 
     switch (this.chargeType) {
       case 'shot':
@@ -1677,6 +2064,10 @@ class FootballGame {
         }
 
         this.flashShotSpeed(shotKmh);
+
+        // Dispatch OnShotTaken event
+        this.events.emit('OnShotTaken', this.activePlayer, charge, aim.clone());
+        this.onShotTaken(this.activePlayer, charge, aim.clone());
         break;
 
       case 'pass':
@@ -1696,12 +2087,18 @@ class FootballGame {
           aim.copy(toMate).normalize();
           forceMag = Math.min(32, Math.max(16, dist * 1.3 + (pasStat / 100) * 4));
           this.passReceiver = mate;
+          kickTarget = mate.mesh.position.clone();
         } else {
           aim.copy(passDir);
           forceMag = 22 + charge * 10;
+          kickTarget = playerPos.clone().addScaledVector(aim, forceMag * 0.8);
         }
         elevation = 0.05;
         kickSoundType = 'normal';
+
+        // Dispatch OnBallPassed event
+        this.events.emit('OnBallPassed', this.activePlayer, charge, kickTarget);
+        this.onBallPassed(this.activePlayer, charge, kickTarget);
         break;
 
       case 'through':
@@ -1720,12 +2117,18 @@ class FootballGame {
           forceMag = Math.min(34, Math.max(22, dist * 1.35 + 5));
           this.passReceiver = runner;
           spinY = (Math.random() - 0.5) * 6;
+          kickTarget = leadSpot.clone();
         } else {
           aim.copy(leadDir);
           forceMag = 26 + charge * 8;
+          kickTarget = playerPos.clone().addScaledVector(aim, forceMag * 0.8);
         }
         elevation = 0.12;
         kickSoundType = 'finesse';
+
+        // Dispatch OnBallPassed event
+        this.events.emit('OnBallPassed', this.activePlayer, charge, kickTarget);
+        this.onBallPassed(this.activePlayer, charge, kickTarget);
         break;
 
       case 'aerial':
@@ -1735,6 +2138,11 @@ class FootballGame {
         elevation = 6.5 + charge * 6.5;
         spinY = (Math.random() - 0.5) * 12;
         kickSoundType = 'normal';
+        kickTarget = playerPos.clone().addScaledVector(aim, forceMag * 0.9);
+
+        // Dispatch OnBallPassed event
+        this.events.emit('OnBallPassed', this.activePlayer, charge, kickTarget);
+        this.onBallPassed(this.activePlayer, charge, kickTarget);
         break;
     }
 
@@ -2040,41 +2448,11 @@ class FootballGame {
   }
 
   updateBallPhysics(dt) {
-    // 1. Aerodynamic Magnus Force (Spins bend trajectory in air & on turf)
-    if (this.ballSpin.lengthSq() > 0.01) {
-      const magnus = new THREE.Vector3().crossVectors(this.ballSpin, this.ballVel).multiplyScalar(0.0038);
-      this.ballVel.addScaledVector(magnus, dt);
-      this.ballSpin.multiplyScalar(0.984); // natural spin decay
-    }
+    // 1-6. Modular Aerodynamics, Magnus Lift/Curve, Restitution Bounces & Ground Turf Friction
+    this.ballPhysicsEngine.update(this.ball, this.ballVel, this.ballSpin, dt);
 
-    // 2. Air Drag Resistance
-    this.ballVel.multiplyScalar(0.9985);
-
-    // 3. Velocity Integration
-    this.ball.position.addScaledVector(this.ballVel, dt);
-
-    // 4. Gravity
-    this.ballVel.y -= 14.5 * dt;
-
-    // 5. Pitch Ground Collision & Bounce Restitution
-    if (this.ball.position.y <= this.ballRadius) {
-      this.ball.position.y = this.ballRadius;
-      if (Math.abs(this.ballVel.y) > 1.0) {
-        this.ballVel.y = -this.ballVel.y * 0.46;
-      } else {
-        this.ballVel.y = 0;
-      }
-      // Natural rolling friction on manicured grass
-      this.ballVel.x *= 0.987;
-      this.ballVel.z *= 0.987;
-    }
-
-    // 6. Ball Rolling Rotation
-    const speed = Math.sqrt(this.ballVel.x * this.ballVel.x + this.ballVel.z * this.ballVel.z);
-    if (speed > 0.05) {
-      this.ball.rotation.x += (this.ballVel.z / this.ballRadius) * dt;
-      this.ball.rotation.z -= (this.ballVel.x / this.ballRadius) * dt;
-    }
+    // Evaluate pitch trigger zones and dispatch OnBallEnteredTrigger
+    this.triggerZones.update(this.ball.position);
 
     // 7. Goal Post Collisions (Metallic crossbar & upright pings)
     if (this.postHitCooldown > 0) {
@@ -2392,56 +2770,54 @@ class FootballGame {
       if (this.keys['KeyA'] || this.keys['ArrowLeft']) move.x -= 1;
       if (this.keys['KeyD'] || this.keys['ArrowRight']) move.x += 1;
 
-      // Sprinting & Stamina
-      let speed = 9.5;
-      const isSprinting = this.isShiftDown && this.activePlayer.stamina > 5;
-      if (isSprinting) {
-        speed = 15.0;
-        this.activePlayer.stamina = Math.max(0, this.activePlayer.stamina - dt * 14);
-      } else {
-        this.activePlayer.stamina = Math.min(100, this.activePlayer.stamina + dt * 4);
-      }
+      // 8-Directional Fluid Locomotion, Acceleration & On-Ball vs Off-Ball Speed Mechanics
+      const locomotionState = this.locomotionEngine.updatePlayerMovement(
+        this.activePlayer,
+        move,
+        this.isShiftDown,
+        dt
+      );
 
-      // Stamina HUD Update
-      const stamFill = document.getElementById('hud-stamina-fill');
-      if (stamFill) stamFill.style.width = `${this.activePlayer.stamina}%`;
-
-      const isMoving = move.lengthSq() > 0;
-      if (isMoving) {
-        move.normalize().multiplyScalar(speed);
-        this.activePlayer.mesh.position.addScaledVector(move, dt);
-
-        const targetRotY = Math.atan2(move.x, move.z);
-        this.activePlayer.mesh.rotation.y = THREE.MathUtils.lerp(this.activePlayer.mesh.rotation.y, targetRotY, 0.35);
-      }
-
-      // Animate active player locomotion
-      this.updatePlayerLocomotion(this.activePlayer, dt, isMoving, isMoving ? speed : 0);
+      // Animate active player locomotion with accurate current speed
+      this.updatePlayerLocomotion(this.activePlayer, dt, locomotionState.isMoving, locomotionState.currentSpeed);
 
       // Dribbling & Ball Possession Check
       const pPos = this.activePlayer.mesh.position;
       const distToBall = pPos.distanceTo(this.ball.position);
 
       // Can only regain possession if not currently recovering from stumble
-      if (this.kickCooldown <= 0 && this.activePlayer.stumbleTimer <= 0 && distToBall < 1.9) {
+      if (this.kickCooldown <= 0 && this.activePlayer.stumbleTimer <= 0 && distToBall < 2.0) {
         if (!this.activePlayer.hasPossession) {
           this.activePlayer.hasPossession = true;
           this.awayPlayers.forEach(op => op.hasPossession = false);
         }
       }
 
-      // Dynamic Ball Control & Dribbling
+      // Dynamic Cadence-Based Dribbling & Ball Control (Close control vs sprint knock-on)
       if (this.activePlayer.hasPossession && this.kickCooldown <= 0 && this.activePlayer.stumbleTimer <= 0) {
         const rotY = this.activePlayer.mesh.rotation.y;
         const fwd = new THREE.Vector3(Math.sin(rotY), 0, Math.cos(rotY));
+        const paceStat = this.activePlayer.data.pace || 80;
+        const driStat = this.activePlayer.data.dri || 80;
 
-        // When sprinting, ball is pushed further ahead (knock-on), creating window for defender tackles!
-        const leadDist = isSprinting ? 1.75 : 0.95;
+        // Natural foot-to-ball distance:
+        // - Close control in normal jog: 0.95m - 1.05m directly at the foot
+        // - Sprint knock-on: 2.1m - 2.6m pushed ahead into stride, creating authentic tackle windows
+        const isSprinting = locomotionState.isSprinting;
+        const leadDist = isSprinting ? (2.1 + (paceStat / 100) * 0.5) : (0.95 + (driStat / 100) * 0.1);
         const dribbleTarget = pPos.clone().add(fwd.multiplyScalar(leadDist));
         dribbleTarget.y = this.ballRadius;
 
-        const lerpSpeed = isSprinting ? 0.28 : 0.42;
+        // Dynamic interpolation rate: tighter touch for elite dribblers, looser during top sprint
+        const lerpSpeed = isSprinting ? 0.22 : (0.38 + (driStat / 100) * 0.1);
         this.ball.position.lerp(dribbleTarget, lerpSpeed);
+
+        // Natural rolling rotation of the ball on pitch matching dribble velocity
+        const ballSpeed = this.activePlayer.vel ? this.activePlayer.vel.length() : 0;
+        if (ballSpeed > 0.08) {
+          this.ball.rotation.x += (this.activePlayer.vel.z / this.ballRadius) * dt;
+          this.ball.rotation.z -= (this.activePlayer.vel.x / this.ballRadius) * dt;
+        }
         this.ballVel.set(0, 0, 0);
       }
 

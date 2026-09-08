@@ -83,6 +83,9 @@ void AFootballBall::Tick(float DeltaTime)
 			OnGoalScored.Broadcast(false, Speed);
 		}
 	}
+
+	// Update pitch trigger zones and dispatch OnBallEnteredTrigger
+	UpdateTriggerZones(BallPos);
 }
 
 void AFootballBall::ApplyKick(FVector Direction, float ForceMagnitude, float VerticalElevation, FVector Spin, AFootballPlayerCharacter* Kicker)
@@ -132,4 +135,89 @@ void AFootballBall::ResetBall(FVector NewLocation)
 void AFootballBall::OnBallHit(UPrimitiveComponent* HitComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit)
 {
 	// Sound effects or bounce deceleration
+}
+
+void AFootballBall::UpdateTriggerZones(const FVector& BallPos)
+{
+	TSet<FName> CurrentZones;
+
+	// Center Circle (Radius 9.15m = 915 cm)
+	if (BallPos.X * BallPos.X + BallPos.Y * BallPos.Y <= 915.0f * 915.0f)
+	{
+		CurrentZones.Add(TEXT("CenterCircle"));
+	}
+
+	// Penalty Boxes (X +/- [3350, 5250], Y +/- 2015 cm)
+	if (BallPos.X <= -3350.0f && BallPos.X >= -PitchHalfLengthCm && FMath::Abs(BallPos.Y) <= 2015.0f)
+	{
+		CurrentZones.Add(TEXT("PenaltyBoxHome"));
+	}
+	else if (BallPos.X >= 3350.0f && BallPos.X <= PitchHalfLengthCm && FMath::Abs(BallPos.Y) <= 2015.0f)
+	{
+		CurrentZones.Add(TEXT("PenaltyBoxAway"));
+	}
+
+	// Goal Areas (6-yard boxes: X +/- [4650, 5250], Y +/- 915 cm)
+	if (BallPos.X <= -4650.0f && BallPos.X >= -PitchHalfLengthCm && FMath::Abs(BallPos.Y) <= 915.0f)
+	{
+		CurrentZones.Add(TEXT("GoalAreaHome"));
+	}
+	else if (BallPos.X >= 4650.0f && BallPos.X <= PitchHalfLengthCm && FMath::Abs(BallPos.Y) <= 915.0f)
+	{
+		CurrentZones.Add(TEXT("GoalAreaAway"));
+	}
+
+	// Pitch Thirds
+	if (BallPos.X < -1750.0f)
+	{
+		CurrentZones.Add(TEXT("FinalThirdHome"));
+	}
+	else if (BallPos.X > 1750.0f)
+	{
+		CurrentZones.Add(TEXT("FinalThirdAway"));
+	}
+	else
+	{
+		CurrentZones.Add(TEXT("MiddleThird"));
+	}
+
+	// Goal Mouths
+	if (BallPos.X < -PitchHalfLengthCm && FMath::Abs(BallPos.Y) <= GoalHalfWidthCm && BallPos.Z <= GoalHeightCm)
+	{
+		CurrentZones.Add(TEXT("GoalHome"));
+	}
+	else if (BallPos.X > PitchHalfLengthCm && FMath::Abs(BallPos.Y) <= GoalHalfWidthCm && BallPos.Z <= GoalHeightCm)
+	{
+		CurrentZones.Add(TEXT("GoalAway"));
+	}
+
+	// Touchlines & Out of bounds
+	if (BallPos.Y < -PitchHalfWidthCm)
+	{
+		CurrentZones.Add(TEXT("TouchlineTop"));
+	}
+	else if (BallPos.Y > PitchHalfWidthCm)
+	{
+		CurrentZones.Add(TEXT("TouchlineBottom"));
+	}
+
+	if (BallPos.X < -PitchHalfLengthCm && FMath::Abs(BallPos.Y) > GoalHalfWidthCm)
+	{
+		CurrentZones.Add(TEXT("GoalLineHome"));
+	}
+	else if (BallPos.X > PitchHalfLengthCm && FMath::Abs(BallPos.Y) > GoalHalfWidthCm)
+	{
+		CurrentZones.Add(TEXT("GoalLineAway"));
+	}
+
+	// Broadcast OnBallEnteredTrigger for any newly entered zone
+	for (const FName& ZoneName : CurrentZones)
+	{
+		if (!ActiveTriggerZones.Contains(ZoneName))
+		{
+			OnBallEnteredTrigger.Broadcast(ZoneName);
+		}
+	}
+
+	ActiveTriggerZones = CurrentZones;
 }

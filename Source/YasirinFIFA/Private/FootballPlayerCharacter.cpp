@@ -67,12 +67,13 @@ void AFootballPlayerCharacter::Tick(float DeltaTime)
 		CurrentStamina = FMath::Clamp(CurrentStamina + StaminaRecoveryRate * DeltaTime, 0.0f, MaxStamina);
 	}
 
-	// Dynamic speed based on stamina condition
+	// Dynamic speed based on stamina condition, player pace, and ball possession (with ball vs off-ball)
 	float FatigueFactor = FMath::Lerp(0.70f, 1.0f, CurrentStamina / MaxStamina);
-	float BaseSpeed = bIsSprinting ? 820.0f : 520.0f;
+	float PossessionMultiplier = bHasBallPossession ? 0.82f : 1.0f; // ~18% speed reduction with ball
+	float BaseSpeed = bIsSprinting ? 940.0f : 580.0f;
 	// Boost speed based on player pace stat
 	float PaceMultiplier = FMath::Lerp(0.85f, 1.15f, PlayerStats.Pace / 100.0f);
-	GetCharacterMovement()->MaxWalkSpeed = BaseSpeed * FatigueFactor * PaceMultiplier;
+	GetCharacterMovement()->MaxWalkSpeed = BaseSpeed * FatigueFactor * PaceMultiplier * PossessionMultiplier;
 
 	// Dribble physics: smoothly pull ball with player
 	if (bHasBallPossession && ControlledBall)

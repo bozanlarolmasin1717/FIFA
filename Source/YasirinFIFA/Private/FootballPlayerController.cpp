@@ -283,6 +283,17 @@ void AFootballPlayerController::ExecuteChargedKick(EKickActionType ActionType, f
 
 	ActiveFootballPlayer->ReleaseBallPossession();
 	GameBall->ApplyKick(AimDir, ForceMagnitude, VerticalElevation, Spin, ActiveFootballPlayer);
+
+	// Dispatch rules & telemetry events
+	if (ActionType == EKickActionType::Shot)
+	{
+		GameBall->OnShotTaken.Broadcast(ActiveFootballPlayer, ChargeRatio, AimDir);
+	}
+	else if (ActionType == EKickActionType::Pass || ActionType == EKickActionType::ThroughBall || ActionType == EKickActionType::AerialPass)
+	{
+		FVector TargetPosition = ActiveFootballPlayer->GetActorLocation() + AimDir * ForceMagnitude;
+		GameBall->OnBallPassed.Broadcast(ActiveFootballPlayer, ChargeRatio, TargetPosition);
+	}
 }
 
 AFootballPlayerCharacter* AFootballPlayerController::FindBestPassTarget(FVector AimDirection, float MaxAngleDegrees)

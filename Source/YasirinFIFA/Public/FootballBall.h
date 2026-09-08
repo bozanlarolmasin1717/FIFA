@@ -9,6 +9,9 @@
 #include "FootballBall.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnBallScoredGoal, bool, bIsHomeGoal, float, ShotSpeedKmh);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnBallPassed, class AFootballPlayerCharacter*, Player, float, Power, FVector, Target);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnShotTaken, class AFootballPlayerCharacter*, Player, float, Power, FVector, Direction);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnBallEnteredTrigger, FName, TriggerZoneName);
 
 UCLASS()
 class YASIRINFIFA_API AFootballBall : public AActor
@@ -68,6 +71,16 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Ball Events")
 	FOnBallScoredGoal OnGoalScored;
 
+	// Rule and telemetry event dispatchers
+	UPROPERTY(BlueprintAssignable, Category = "Ball Events")
+	FOnBallPassed OnBallPassed;
+
+	UPROPERTY(BlueprintAssignable, Category = "Ball Events")
+	FOnShotTaken OnShotTaken;
+
+	UPROPERTY(BlueprintAssignable, Category = "Ball Events")
+	FOnBallEnteredTrigger OnBallEnteredTrigger;
+
 	// Reset ball to a specific position (e.g. center spot)
 	UFUNCTION(BlueprintCallable, Category = "Ball Gameplay")
 	void ResetBall(FVector NewLocation);
@@ -83,4 +96,6 @@ private:
 	const float GoalHeightCm = 244.0f;
 
 	bool bGoalRegistered;
+	TSet<FName> ActiveTriggerZones;
+	void UpdateTriggerZones(const FVector& BallPos);
 };
