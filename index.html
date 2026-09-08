@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BOZAN GAMES - Football Simulation 2026</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:ital,wght@0,400;0,600;0,700;1,700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- 3D Canvas Container -->
+  <div id="canvas-container"></div>
+
+  <!-- =========================================================================
+       SCREEN 1: "BOZAN GAMES" STUDIO SPLASH SCREEN
+       ========================================================================= -->
+  <div id="splash-screen" class="screen-layer active">
+    <div class="splash-ambient-glow"></div>
+    <div class="splash-content">
+      <div class="studio-badge-wrap">
+        <div class="studio-crest">
+          <svg viewBox="0 0 64 64" fill="none" class="crest-svg">
+            <polygon points="32 4 58 18 58 46 32 60 6 46 6 18" stroke="#10b981" stroke-width="2.5" fill="rgba(6, 78, 59, 0.4)"/>
+            <polygon points="32 10 52 21 52 43 32 54 12 43 12 21" stroke="#f59e0b" stroke-width="1.5" fill="none"/>
+            <path d="M22 20H34C38.4 20 42 23.6 42 28C42 32.4 38.4 36 34 36H22V20Z" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M22 34H36C40.4 34 44 37.6 44 42C44 46.4 40.4 50 36 50H22V34Z" stroke="#10b981" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="22" y1="20" x2="22" y2="50" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <span class="edition-tag">NEXT-GEN SIMULATION</span>
+      </div>
+
+      <h1 class="splash-title">BOZAN GAMES</h1>
+      <p class="splash-subtitle">PROFESSIONAL 11v11 FOOTBALL ENGINE &bull; 2026 EDITION</p>
+
+      <div class="splash-action-box">
+        <button id="btn-splash-start" class="splash-btn" tabindex="0">
+          <span class="btn-pulse-ring"></span>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+          <span>OYUNA BAŞLA</span>
+        </button>
+        <span class="splash-hint">Klavyeden herhangi bir tuşa basın veya tıklayın</span>
+      </div>
+    </div>
+
+    <div class="splash-footer">
+      <span>&copy; 2026 BOZAN GAMES. POWERED BY THREE.JS HIGH-PERFORMANCE WEBGL ENGINE.</span>
+    </div>
+  </div>
+
+
+  <!-- =========================================================================
+       SCREEN 2: MAIN MENU (ANA MENÜ) - BROKEN SYMMETRY PROFESSIONAL LAYOUT
+       ========================================================================= -->
+  <div id="main-menu" class="screen-layer">
+    
+    <!-- Top Global Header -->
+    <header class="menu-top-bar">
+      <div class="menu-brand">
+        <div class="mini-crest">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2">
+            <polygon points="12 2 22 7 22 17 12 22 2 17 2 7 12 2"></polygon>
+            <polyline points="2 7 12 12 22 7"></polyline>
+            <polyline points="12 22 12 12"></polyline>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-name">BOZAN GAMES</span>
+          <span class="brand-sub">FOOTBALL 26</span>
+        </div>
+      </div>
+
+      <!-- User Profile & Club Stats Strip -->
+      <div class="menu-user-strip">
+        <div class="user-badge">
+          <div class="user-avatar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+              <circle cx="12" cy="7" r="4"></circle>
+            </svg>
+          </div>
+          <div class="user-meta">
+            <span class="user-club">BOZAN FC</span>
+            <span class="user-level">SEVİYE 42 &bull; PRO LİG</span>
+          </div>
+        </div>
+
+        <div class="user-currency">
+          <div class="currency-item">
+            <span class="coin-icon">G</span>
+            <span class="coin-amount">125,450</span>
+          </div>
+          <div class="currency-item pts">
+            <span class="pt-icon">FP</span>
+            <span class="pt-amount">2,800</span>
+          </div>
+        </div>
+
+        <!-- Quick Menu Actions -->
+        <div class="menu-quick-tools">
+          <button id="menu-btn-audio" class="tool-icon-btn" title="Ses Aç/Kapat">
+            <svg id="menu-audio-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+            </svg>
+          </button>
+          <button id="menu-btn-fs" class="tool-icon-btn" title="Tam Ekran">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="15 3 21 3 21 9"></polyline>
+              <polyline points="9 21 3 21 3 15"></polyline>
+              <line x1="21" y1="3" x2="14" y2="10"></line>
+              <line x1="3" y1="21" x2="10" y2="14"></line>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Navigation Hub (Broken Symmetry Dynamic Grid) -->
+    <main class="menu-hub">
+      
+      <!-- HERO CARD: HIZLI MAÇ (Left Col - Large) -->
+      <section class="menu-card hero-card" id="card-hero-match">
+        <div class="hero-card-bg"></div>
+        <div class="hero-card-glow"></div>
+        <div class="card-content">
+          <div class="card-tag">ÖNE ÇIKAN MOD</div>
+          <h2 class="card-title">HIZLI MAÇ &bull; DERBİ</h2>
+          <p class="card-desc">Dünya futbolunun 5 devi sahada. Real Madrid, Man City, Barcelona, Bayern ve Al-Nassr ile santra yap.</p>
+          
+          <!-- Team Badges Preview Mini Row -->
+          <div class="hero-teams-strip">
+            <div class="mini-team-pill" title="Real Madrid CF"><span class="team-dot rm"></span> RMA</div>
+            <div class="mini-team-pill" title="Manchester City"><span class="team-dot mc"></span> MCI</div>
+            <div class="mini-team-pill" title="FC Barcelona"><span class="team-dot fcb"></span> FCB</div>
+            <div class="mini-team-pill" title="Bayern München"><span class="team-dot bay"></span> BAY</div>
+            <div class="mini-team-pill" title="Al-Nassr (CR7)"><span class="team-dot nas"></span> NAS</div>
+          </div>
+
+          <button class="action-btn-hero" id="btn-hero-play">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+            <span>SANTRA YAP &bull; MAÇA BAŞLA</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- RIGHT COLUMN: KARTLARIM & OTHER HUBS -->
+      <div class="menu-right-col">
+        
+        <!-- KARTLARIM (Ultimate Team Collection) Hub Card -->
+        <section class="menu-card cards-hub-card" id="card-hub-cards">
+          <div class="card-tag gold-tag">FUT KOLEKSİYONU</div>
+          <div class="card-inner-flex">
+            <div class="card-info-side">
+              <h3 class="card-title">KARTLARIM</h3>
+              <p class="card-desc">63 lisanslı süperstar oyuncu kartı, fotoğrafları, OVR güçleri ve özel istatistikleri.</p>
+              <div class="collection-stats-row">
+                <div class="stat-pill"><span class="num">63</span> OYUNCU</div>
+                <div class="stat-pill"><span class="num">5</span> KULÜP</div>
+                <div class="stat-pill gold"><span class="num">4</span> TIER</div>
+              </div>
+            </div>
+            <div class="card-art-side">
+              <div class="mini-fanned-cards">
+                <div class="fanned-card c-ronaldo">
+                  <span class="fan-ovr">94</span>
+                  <span class="fan-name">RONALDO</span>
+                </div>
+                <div class="fanned-card c-mbappe">
+                  <span class="fan-ovr">92</span>
+                  <span class="fan-name">MBAPPE</span>
+                </div>
+                <div class="fanned-card c-haaland">
+                  <span class="fan-ovr">91</span>
+                  <span class="fan-name">HAALAND</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <button class="btn-hub-action" id="btn-open-cards-hub">
+            <span>KOLEKSİYONU İNCELE</span>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+          </button>
+        </section>
+
+        <!-- TWO-COLUMN SUB-GRID: TAKIM YÖNETİMİ & AYARLAR -->
+        <div class="sub-grid">
+          
+          <!-- SQUAD / SUBS CARD -->
+          <section class="menu-card sub-card" id="card-hub-subs">
+            <div class="sub-card-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                <circle cx="8.5" cy="7" r="4"></circle>
+                <polyline points="17 11 19 13 23 9"></polyline>
+              </svg>
+            </div>
+            <div class="sub-card-body">
+              <h4>KADRO & YEDEKLER</h4>
+              <p>İlk 11 taktikleri, kondisyon ve oyuncu değişiklikleri.</p>
+            </div>
+            <button class="btn-sub-trigger" id="btn-open-subs-hub">YÖNET</button>
+          </section>
+
+          <!-- SETTINGS CARD -->
+          <section class="menu-card sub-card" id="card-hub-settings">
+            <div class="sub-card-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+              </svg>
+            </div>
+            <div class="sub-card-body">
+              <h4>AYARLAR</h4>
+              <p>Grafik kalitesi, maç hızı ve stadyum atmosferi.</p>
+            </div>
+            <button class="btn-sub-trigger" id="btn-open-settings-hub">DÜZENLE</button>
+          </section>
+        </div>
+
+        <!-- CONTROLS STRIP -->
+        <section class="menu-card controls-strip-card" id="card-hub-controls">
+          <div class="strip-left">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+              <line x1="6" y1="8" x2="6" y2="8"></line>
+              <line x1="10" y1="8" x2="10" y2="8"></line>
+              <line x1="14" y1="8" x2="14" y2="8"></line>
+              <line x1="18" y1="8" x2="18" y2="8"></line>
+              <line x1="7" y1="16" x2="17" y2="16"></line>
+            </svg>
+            <span>KONTROLLER & TUŞLAR: WASD (Hareket), LMB (Şut), RMB (Pas), Q (Ara Pas), E (Yüksek Pas), SHIFT (Depar)</span>
+          </div>
+          <button class="btn-text-link" id="btn-open-controls-modal">Rehberi Gör</button>
+        </section>
+
+      </div>
+    </main>
+ 
+    <!-- Now Playing FIFA Soundtrack Bar -->
+    <footer class="menu-soundtrack-bar">
+      <div class="soundtrack-info">
+        <div class="soundtrack-icon-badge">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 18V5l12-2v13"></path>
+            <circle cx="6" cy="18" r="3"></circle>
+            <circle cx="18" cy="16" r="3"></circle>
+          </svg>
+        </div>
+        <div class="soundtrack-meta">
+          <div class="soundtrack-header-row">
+            <span class="soundtrack-tag">FIFA SOUNDTRACK</span>
+            <span class="soundtrack-bpm" id="soundtrack-bpm">124 BPM</span>
+          </div>
+          <div class="soundtrack-title" id="soundtrack-title">Electric Kickoff</div>
+          <div class="soundtrack-artist" id="soundtrack-artist">Yasirin Sound Lab &bull; Electro Stadium Hype</div>
+        </div>
+      </div>
+
+      <!-- Animated Soundwave Visualizer -->
+      <div class="soundtrack-visualizer" id="soundtrack-visualizer">
+        <span class="bar bar-1"></span>
+        <span class="bar bar-2"></span>
+        <span class="bar bar-3"></span>
+        <span class="bar bar-4"></span>
+        <span class="bar bar-5"></span>
+      </div>
+
+      <!-- Player Controls -->
+      <div class="soundtrack-controls">
+        <button class="soundtrack-btn" id="btn-music-prev" title="Önceki Parça">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="19 20 9 12 19 4 19 20"></polygon>
+            <line x1="5" y1="19" x2="5" y2="5"></line>
+          </svg>
+        </button>
+        <button class="soundtrack-btn play-btn" id="btn-music-toggle" title="Müziği Duraklat / Oynat">
+          <svg id="music-toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="6" y="4" width="4" height="16"></rect>
+            <rect x="14" y="4" width="4" height="16"></rect>
+          </svg>
+        </button>
+        <button class="soundtrack-btn" id="btn-music-next" title="Sonraki Parça">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="5 4 15 12 5 20 5 4"></polygon>
+            <line x1="19" y1="5" x2="19" y2="19"></line>
+          </svg>
+        </button>
+      </div>
+    </footer>
+
+  </div>
+
+
+  <!-- =========================================================================
+       SCREEN 3: TEAM SELECTION MODAL (TAKIM SEÇİMİ)
+       ========================================================================= -->
+  <div class="modal-backdrop" id="modal-team-select">
+    <div class="modal-dialog modal-team-dialog">
+      <div class="modal-header">
+        <div>
+          <h2 class="modal-title">TAKIM SEÇİMİ &bull; MAÇ ÖNCESİ</h2>
+          <p class="modal-subtitle">Ev sahibi ve deplasman kulüplerini seçin</p>
+        </div>
+        <button class="modal-close-btn" id="btn-close-team-select">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <div class="team-select-container">
+        
+        <!-- HOME TEAM SELECTOR -->
+        <div class="team-side-box" id="home-side-selector">
+          <div class="side-title home-title">
+            <span class="side-tag">EV SAHİBİ (1. OYUNCU)</span>
+            <h3 id="sel-home-name">REAL MADRID CF</h3>
+          </div>
+
+          <div class="team-cards-list" id="home-team-list">
+            <!-- Rendered by JS -->
+          </div>
+
+          <div class="team-stats-preview" id="home-stats-preview">
+            <div class="stat-bar-item">
+              <div class="bar-label"><span>HÜCUM</span><strong id="home-att-val">90</strong></div>
+              <div class="bar-track"><div class="bar-fill" id="home-att-bar" style="width: 90%;"></div></div>
+            </div>
+            <div class="stat-bar-item">
+              <div class="bar-label"><span>ORTA SAHA</span><strong id="home-mid-val">88</strong></div>
+              <div class="bar-track"><div class="bar-fill" id="home-mid-bar" style="width: 88%;"></div></div>
+            </div>
+            <div class="stat-bar-item">
+              <div class="bar-label"><span>DEFANS</span><strong id="home-def-val">86</strong></div>
+              <div class="bar-track"><div class="bar-fill" id="home-def-bar" style="width: 86%;"></div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- VS DIVIDER -->
+        <div class="team-vs-divider">
+          <span class="vs-circle">VS</span>
+        </div>
+
+        <!-- AWAY TEAM SELECTOR -->
+        <div class="team-side-box" id="away-side-selector">
+          <div class="side-title away-title">
+            <span class="side-tag">DEPLASMAN (RAKİP)</span>
+            <h3 id="sel-away-name">MANCHESTER CITY</h3>
+          </div>
+
+          <div class="team-cards-list" id="away-team-list">
+            <!-- Rendered by JS -->
+          </div>
+
+          <div class="team-stats-preview" id="away-stats-preview">
+            <div class="stat-bar-item">
+              <div class="bar-label"><span>HÜCUM</span><strong id="away-att-val">91</strong></div>
+              <div class="bar-track"><div class="bar-fill" id="away-att-bar" style="width: 91%;"></div></div>
+            </div>
+            <div class="stat-bar-item">
+              <div class="bar-label"><span>ORTA SAHA</span><strong id="away-mid-val">91</strong></div>
+              <div class="bar-track"><div class="bar-fill" id="away-mid-bar" style="width: 91%;"></div></div>
+            </div>
+            <div class="stat-bar-item">
+              <div class="bar-label"><span>DEFANS</span><strong id="away-def-val">87</strong></div>
+              <div class="bar-track"><div class="bar-fill" id="away-def-bar" style="width: 87%;"></div></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- MATCH LAUNCH ACTION BAR -->
+      <div class="team-select-footer">
+        <button class="action-btn-primary match-start-btn" id="btn-confirm-start-match">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+          <span>SANTRAYA ÇIK VE MAÇI BAŞLAT</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- =========================================================================
+       SCREEN 4: "KARTLARIM" (MY CARDS - FUT COLLECTION HUB)
+       ========================================================================= -->
+  <div class="modal-backdrop" id="modal-cards">
+    <div class="modal-dialog modal-fullscreen-dialog">
+      
+      <div class="modal-header">
+        <div class="header-titles">
+          <div class="modal-breadcrumb">
+            <span>BOZAN GAMES</span> &bull; <span>FUT KOLEKSİYONU</span>
+          </div>
+          <h2 class="modal-title">KARTLARIM &bull; 63 YILDIZ OYUNCU</h2>
+        </div>
+        <button class="modal-close-btn" id="btn-close-cards">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Filter Controls Toolbar -->
+      <div class="cards-filter-toolbar">
+        
+        <!-- Search Input -->
+        <div class="search-box">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input type="text" id="cards-search-input" placeholder="Oyuncu adı, pozisyon veya kulüp ara...">
+        </div>
+
+        <!-- Team Filters -->
+        <div class="filter-group">
+          <span class="filter-label">KULÜP:</span>
+          <div class="filter-pills" id="team-filter-pills">
+            <button class="pill active" data-team="all">Tümü (63)</button>
+            <button class="pill" data-team="real_madrid">Real Madrid</button>
+            <button class="pill" data-team="man_city">Man City</button>
+            <button class="pill" data-team="barcelona">Barcelona</button>
+            <button class="pill" data-team="bayern">Bayern</button>
+            <button class="pill" data-team="al_nassr">Al-Nassr (CR7)</button>
+          </div>
+        </div>
+
+        <!-- Position Filters -->
+        <div class="filter-group">
+          <span class="filter-label">MEVKİ:</span>
+          <div class="filter-pills" id="pos-filter-pills">
+            <button class="pill active" data-pos="all">Tümü</button>
+            <button class="pill" data-pos="GK">Kaleci</button>
+            <button class="pill" data-pos="DEF">Defans</button>
+            <button class="pill" data-pos="MID">Orta Saha</button>
+            <button class="pill" data-pos="FWD">Forvet</button>
+          </div>
+        </div>
+
+        <!-- Tier Filters -->
+        <div class="filter-group">
+          <span class="filter-label">KART TİPİ:</span>
+          <div class="filter-pills" id="tier-filter-pills">
+            <button class="pill active" data-tier="all">Tümü</button>
+            <button class="pill gold-border" data-tier="legendary">Efsanevi</button>
+            <button class="pill epic-border" data-tier="epic">Epik</button>
+            <button class="pill" data-tier="gold">Altın</button>
+            <button class="pill" data-tier="silver">Gümüş</button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Player Cards Responsive Grid -->
+      <div class="cards-grid" id="cards-container">
+        <!-- Cards injected dynamically with photos -->
+      </div>
+      
+    </div>
+  </div>
+
+
+  <!-- =========================================================================
+       SUBSTITUTIONS & TACTICS MODAL
+       ========================================================================= -->
+  <div class="modal-backdrop" id="modal-subs">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div>
+          <h2 class="modal-title">TAKIM YÖNETİMİ & DEĞİŞİKLİKLER</h2>
+          <p class="modal-subtitle">Sahadaki oyuncuyu seçip yedek kulübesiyle değiştirin</p>
+        </div>
+        <button class="modal-close-btn" id="btn-close-subs">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="sub-layout">
+        <div class="sub-column">
+          <div class="sub-col-title">Sahadaki 11 (Çıkacak Oyuncu)</div>
+          <div class="roster-list" id="active-starters-list"></div>
+        </div>
+        <div class="sub-column">
+          <div class="sub-col-title">Yedek Kulübesi (Girecek Oyuncu)</div>
+          <div class="roster-list" id="bench-substitutes-list"></div>
+        </div>
+      </div>
+      <button class="action-btn-primary" id="btn-confirm-sub">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="20 6 9 17 4 12"></polyline>
+        </svg>
+        <span>Değişikliği Onayla (%100 Kondisyon Yeniler)</span>
+      </button>
+    </div>
+  </div>
+
+
+  <!-- =========================================================================
+       SETTINGS MODAL
+       ========================================================================= -->
+  <div class="modal-backdrop" id="modal-settings">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div>
+          <h2 class="modal-title">OYUN VE GRAFİK AYARLARI</h2>
+          <p class="modal-subtitle">Simülasyon hızı, stadyum sesleri ve görsel kalite</p>
+        </div>
+        <button class="modal-close-btn" id="btn-close-settings">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="settings-grid">
+        <div class="setting-row">
+          <div class="setting-info">
+            <h4>Grafik Kalite Önayarı</h4>
+            <p>Çim gölgeleri, tribün seyirci yoğunluğu ve ışıklandırma</p>
+          </div>
+          <div class="segmented-control" id="graphics-control">
+            <button class="seg-btn" data-quality="low">Düşük</button>
+            <button class="seg-btn" data-quality="med">Orta</button>
+            <button class="seg-btn active" data-quality="high">Yüksek (FHD)</button>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <h4>Maç Hızı & Zaman Akışı</h4>
+            <p>Maç saatinin simülasyon hızlanması</p>
+          </div>
+          <div class="segmented-control" id="speed-control">
+            <button class="seg-btn" data-speed="1">Gerçek Zamanlı (1x)</button>
+            <button class="seg-btn active" data-speed="8">Standart (8x)</button>
+            <button class="seg-btn" data-speed="16">Hızlı (16x)</button>
+          </div>
+        </div>
+
+        <!-- 4-CHANNEL STUDIO AUDIO MIXER -->
+        <div class="audio-mixer-section">
+          <div class="mixer-header-row">
+            <div class="mixer-title-group">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+              </svg>
+              <div>
+                <h4>4-KANALLI SES & MÜZİK MİKSERİ</h4>
+                <p>Master, BGM müzikleri, maç efektleri ve tribün ses seviyeleri</p>
+              </div>
+            </div>
+            <button class="action-btn-secondary mixer-mute-btn" id="btn-mixer-mute-toggle">
+              <span id="mixer-mute-text">Tümünü Sustur</span>
+            </button>
+          </div>
+
+          <div class="mixer-channels-grid">
+            <!-- 1. Master Volume -->
+            <div class="mixer-channel-card">
+              <div class="channel-top">
+                <span class="channel-title">GENEL SES (MASTER)</span>
+                <span class="channel-value" id="disp-val-master">85%</span>
+              </div>
+              <input type="range" class="custom-range" id="slider-vol-master" min="0" max="100" value="85">
+            </div>
+
+            <!-- 2. BGM Music Volume -->
+            <div class="mixer-channel-card">
+              <div class="channel-top">
+                <span class="channel-title">MÜZİKLER (SOUNDTRACK BGM)</span>
+                <span class="channel-value" id="disp-val-music">70%</span>
+              </div>
+              <input type="range" class="custom-range" id="slider-vol-music" min="0" max="100" value="70">
+            </div>
+
+            <!-- 3. Match SFX Volume -->
+            <div class="mixer-channel-card">
+              <div class="channel-top">
+                <span class="channel-title">MAÇ SESLERİ (ŞUT, DÜDÜK, DİREK)</span>
+                <span class="channel-value" id="disp-val-sfx">85%</span>
+              </div>
+              <input type="range" class="custom-range" id="slider-vol-sfx" min="0" max="100" value="85">
+            </div>
+
+            <!-- 4. Stadium Crowd Volume -->
+            <div class="mixer-channel-card">
+              <div class="channel-top">
+                <span class="channel-title">TRİBÜN AMBİYANSI & TEZAHÜRAT</span>
+                <span class="channel-value" id="disp-val-crowd">65%</span>
+              </div>
+              <input type="range" class="custom-range" id="slider-vol-crowd" min="0" max="100" value="65">
+            </div>
+          </div>
+
+          <!-- Soundtrack Selection -->
+          <div class="mixer-track-picker">
+            <span class="picker-label">Çalınacak Soundtrack Parçası:</span>
+            <div class="segmented-control" id="track-control">
+              <button class="seg-btn active" data-track="0">01. Electric Kickoff (124 BPM)</button>
+              <button class="seg-btn" data-track="1">02. Golden Trophy (114 BPM)</button>
+              <button class="seg-btn" data-track="2">03. Champions Arena (128 BPM)</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- =========================================================================
+       CONTROLS MODAL GUIDE
+       ========================================================================= -->
+  <div class="modal-backdrop" id="modal-controls">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div>
+          <h2 class="modal-title">KONTROLLER & TUŞ KOMBİNASYONLARI</h2>
+          <p class="modal-subtitle">Gelişmiş futbol simülasyon mekanikleri</p>
+        </div>
+        <button class="modal-close-btn" id="btn-close-controls">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="controls-guide-grid">
+        <div class="guide-item"><span class="keycap lg">W A S D</span><div><strong>Oyuncu Hareketi</strong><p>Topla veya topsuz koşu yönü</p></div></div>
+        <div class="guide-item"><span class="keycap lg">SHIFT</span><div><strong>Depar (Sprint)</strong><p>Hızlı koşu (kondisyon harcar)</p></div></div>
+        <div class="guide-item"><span class="keycap lg">SOL TIK (LMB)</span><div><strong>Şut / Güç Barı</strong><p>Basılı tutup bırakarak şut gücünü ayarla</p></div></div>
+        <div class="guide-item"><span class="keycap lg">SAĞ TIK (RMB)</span><div><strong>Yerden Pas</strong><p>Yönlü akıllı takım arkadaşı pası</p></div></div>
+        <div class="guide-item"><span class="keycap lg">Q</span><div><strong>Ara Pası</strong><p>Savunma arkasına koşu yoluna pas</p></div></div>
+        <div class="guide-item"><span class="keycap lg">E</span><div><strong>Havadan Orta / Yüksek Pas</strong><p>Ceza sahasına kavisli orta</p></div></div>
+        <div class="guide-item"><span class="keycap lg">SPACE</span><div><strong>Aktif Oyuncu Değiştir</strong><p>Topa en yakın oyuncuya odaklan</p></div></div>
+        <div class="guide-item"><span class="keycap lg">M</span><div><strong>Kayarak Müdahale (Slide)</strong><p>Top çalma müdahalesi</p></div></div>
+        <div class="guide-item"><span class="keycap lg">C</span><div><strong>Kamera Açısı Değiştir</strong><p>Broadcast, Behind, Tactical, Overhead</p></div></div>
+        <div class="guide-item"><span class="keycap lg">ESC</span><div><strong>Oyunu Durdur / Menü</strong><p>Pause menüsünü açar</p></div></div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- =========================================================================
+       IN-GAME PAUSE MENU (ESC)
+       ========================================================================= -->
+  <div class="modal-backdrop" id="modal-pause">
+    <div class="modal-dialog modal-pause-dialog">
+      <div class="pause-header">
+        <span class="pause-tag">MAÇ DURDURULDU</span>
+        <h2 class="pause-title">OYUN MENÜSÜ</h2>
+        <div class="pause-score-badge">
+          <span id="pause-home-name">REAL MADRID</span>
+          <span class="p-score" id="pause-score">0 - 0</span>
+          <span id="pause-away-name">MANCHESTER CITY</span>
+        </div>
+      </div>
+
+      <div class="pause-actions-list">
+        <button class="pause-btn primary" id="btn-pause-resume">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+          <span>MAÇA DEVAM ET</span>
+        </button>
+
+        <button class="pause-btn" id="btn-pause-subs">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            <circle cx="8.5" cy="7" r="4"></circle>
+            <polyline points="17 11 19 13 23 9"></polyline>
+          </svg>
+          <span>TAKIM YÖNETİMİ & DEĞİŞİKLİKLER</span>
+        </button>
+
+        <button class="pause-btn" id="btn-pause-cards">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+            <circle cx="8.5" cy="8.5" r="1.5"></circle>
+            <polyline points="21 15 16 10 5 21"></polyline>
+          </svg>
+          <span>FUT OYUNCU KARTLARI</span>
+        </button>
+
+        <button class="pause-btn" id="btn-pause-settings">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          <span>AYARLAR</span>
+        </button>
+
+        <button class="pause-btn danger" id="btn-pause-main-menu">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+            <polyline points="9 22 9 12 15 12 15 22"></polyline>
+          </svg>
+          <span>ANA MENÜYE DÖN</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- =========================================================================
+       SCREEN 5: IN-GAME HUD OVERLAY LAYER (DURING MATCH)
+       ========================================================================= -->
+  <div id="hud-overlay" style="display: none;">
+    
+    <!-- Top Header Bar -->
+    <header class="top-bar">
+      <!-- Match Scoreboard -->
+      <div class="scoreboard interactive">
+        <div class="team-badge home">
+          <span class="team-color-dot home-dot" id="hud-home-dot"></span>
+          <span id="hud-home-name">REAL MADRID</span>
+        </div>
+        <div class="score-display">
+          <span id="score-home">0</span> - <span id="score-away">0</span>
+        </div>
+        <div class="team-badge away">
+          <span id="hud-away-name">MAN CITY</span>
+          <span class="team-color-dot away-dot" id="hud-away-dot"></span>
+        </div>
+        <div class="match-clock">
+          <span class="clock-time" id="clock-display">00:00</span>
+          <span class="clock-half" id="half-display">1. YARI</span>
+        </div>
+      </div>
+
+      <!-- Quick Action Controls -->
+      <div class="top-controls interactive">
+        <button class="icon-btn" id="btn-camera" title="Kamera Açısı (C)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+            <circle cx="12" cy="13" r="4"></circle>
+          </svg>
+          <span id="camera-label">Broadcast Cam</span>
+        </button>
+
+        <button class="icon-btn" id="btn-cards" title="FUT Kartları">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+            <circle cx="8.5" cy="8.5" r="1.5"></circle>
+            <polyline points="21 15 16 10 5 21"></polyline>
+          </svg>
+          <span>Kartlar</span>
+        </button>
+
+        <button class="icon-btn" id="btn-subs" title="Oyuncu Değişiklikleri (Z)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            <circle cx="8.5" cy="7" r="4"></circle>
+            <polyline points="17 11 19 13 23 9"></polyline>
+          </svg>
+          <span>Değişiklik (Z)</span>
+        </button>
+
+        <button class="icon-btn" id="btn-hud-sound" title="Sesi Aç/Kapat">
+          <svg id="hud-sound-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+          </svg>
+          <span id="hud-sound-label">Ses Açık</span>
+        </button>
+
+        <button class="icon-btn" id="btn-settings" title="Menü / Ayarlar (ESC)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="12" x2="21" y2="12"></line>
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <line x1="3" y1="18" x2="21" y2="18"></line>
+          </svg>
+          <span>Menü (ESC)</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- In-game FIFA Soundtrack Pill Badge -->
+    <div id="hud-now-playing-pill" class="hud-music-pill">
+      <div class="music-pill-visualizer">
+        <span class="m-bar"></span>
+        <span class="m-bar"></span>
+        <span class="m-bar"></span>
+      </div>
+      <div class="music-pill-content">
+        <span class="music-pill-tag">FIFA SOUNDTRACK</span>
+        <span class="music-pill-title" id="hud-track-title">Electric Kickoff</span>
+      </div>
+    </div>
+
+    <!-- Goal Celebration Pop-up -->
+    <div id="goal-banner">
+      <div class="goal-title">GOL!</div>
+      <div class="goal-subtitle" id="goal-scorer-info">Müthiş bir vuruşla ağları sarstı!</div>
+    </div>
+
+    <!-- Shot Speed Indicator Flash -->
+    <div id="shot-speed-indicator">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2">
+        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+      </svg>
+      <span class="speed-value" id="speed-value">114</span>
+      <span class="speed-unit">KM/H</span>
+    </div>
+
+    <!-- Bottom HUD & Controls -->
+    <footer class="bottom-bar">
+      
+      <!-- Active Player Condition Card with Photo -->
+      <div class="player-quick-hud interactive">
+        <div class="player-photo-hud-frame">
+          <img id="hud-player-img" src="assets/players/cristiano_ronaldo.jpg" alt="Player Photo" onerror="this.style.display='none'">
+          <div class="player-avatar-small" id="hud-player-rating">94</div>
+        </div>
+        <div class="player-details">
+          <div class="player-name-row">
+            <span class="player-name" id="hud-player-name">C. RONALDO</span>
+            <span class="player-number" id="hud-player-num">#7</span>
+            <span class="card-flag-badge" id="hud-player-pos">ST</span>
+          </div>
+          <div class="player-stamina-container">
+            <span class="stamina-label">KONDİSYON</span>
+            <div class="stamina-track">
+              <div class="stamina-fill" id="hud-stamina-fill" style="width: 100%;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Unified Power Bar -->
+      <div class="power-bar-wrapper" id="power-bar-wrapper">
+        <div class="power-bar-header">
+          <span>GÜÇ BARI</span>
+          <span class="power-action-type" id="power-action-label">ŞUT</span>
+        </div>
+        <div class="power-track">
+          <div class="power-fill" id="power-fill"></div>
+        </div>
+      </div>
+
+      <!-- Controls Legend -->
+      <div class="controls-legend interactive">
+        <div class="legend-item"><span class="keycap">WASD</span> Koşu</div>
+        <div class="legend-item"><span class="keycap">SHIFT</span> Depar</div>
+        <div class="legend-item"><span class="keycap">SPACE</span> Oyuncu Seç</div>
+        <div class="legend-item"><span class="keycap">LMB</span> Şut</div>
+        <div class="legend-item"><span class="keycap">RMB</span> Pas</div>
+        <div class="legend-item"><span class="keycap">Q</span> Ara Pası</div>
+        <div class="legend-item"><span class="keycap">E</span> Havadan Orta</div>
+        <div class="legend-item"><span class="keycap">M</span> Kayarak Müdahale</div>
+        <div class="legend-item"><span class="keycap">Z</span> Değişiklik</div>
+        <div class="legend-item"><span class="keycap">C</span> Kamera</div>
+        <div class="legend-item"><span class="keycap">ESC</span> Menü</div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Halftime Break Overlay -->
+  <div id="halftime-banner" style="display: none;">
+    <h2 style="font-family: var(--font-display); font-size: 42px; color: var(--color-accent-light);">İLK YARI SONUCU (45:00)</h2>
+    <p style="color: var(--color-text-muted);">Oyuncu kondisyonlarını tazelemek ve taktik değişiklik yapmak için <strong>Z</strong> tuşuna basın.</p>
+    <button class="action-btn-primary" id="btn-resume-second-half">İkinci Yarıya Başla</button>
+  </div>
+
+  <!-- Full Time Overlay -->
+  <div id="fulltime-banner" style="display: none;">
+    <h2 style="font-family: var(--font-display); font-size: 42px; color: var(--color-accent-light);">MAÇ SONU (90:00)</h2>
+    <p id="fulltime-score-text" style="color: #ffffff; font-size: 28px; font-weight: 800; font-family: var(--font-display);">0 - 0</p>
+    <div style="display: flex; gap: 16px; justify-content: center; margin-top: 16px;">
+      <button class="action-btn-primary" id="btn-restart-match">Yeniden Oyna</button>
+      <button class="action-btn-secondary" id="btn-fulltime-main-menu">Ana Menüye Dön</button>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="three.min.js"></script>
+  <script src="audio.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "5.5",
+	"Category": "Games",
+	"Description": "FIFA-style 11v11 Football Simulation prototype with realistic physics, custom humanoid character physiology, tactical AI, unified power bar, and camera switching.",
+	"Modules": [
+		{
+			"Name": "YasirinFIFA",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"AdditionalDependencies": [
+				"Engine",
+				"CoreUObject",
+				"UMG",
+				"Slate",
+				"SlateCore",
+				"PhysicsCore",
+				"EnhancedInput"
+			]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "ModelingToolsEditorMode",
+			"Enabled": true,
+			"TargetAllowList": [
+				"Editor"
+			]
+		},
+		{
+			"Name": "EnhancedInput",
+			"Enabled": true
+		}
+	]
+}
