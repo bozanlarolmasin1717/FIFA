@@ -366,6 +366,477 @@ class PitchTriggerZoneSystem {
 }
 
 /**
+ * =========================================================================
+ * MATCH MANAGER & GAME LOOP SYSTEM
+ * Handles:
+ * 1. Match State Machine (WarmUp, KickOff, Playing, GoalScored, OutOfBounds, FullTime)
+ * 2. Countdown Match Timer (90 game mins / 5 real mins = 300s countdown)
+ * 3. Boundary & Trigger Zone Controls (Goal line detection, Throw-in, Corner kick, Goal kick)
+ * 4. Score Management & Minimal Match HUD Synchronization
+ * =========================================================================
+ */
+const MatchState = Object.freeze({
+  WARM_UP: 'WarmUp',
+  KICK_OFF: 'KickOff',
+  PLAYING: 'Playing',
+  GOAL_SCORED: 'GoalScored',
+  OUT_OF_BOUNDS: 'OutOfBounds',
+  FULL_TIME: 'FullTime'
+});
+
+class MatchManager {
+  constructor(game) {
+    this.game = game;
+    this.state = MatchState.WARM_UP;
+    this.previousState = null;
+
+    // Countdown Match Timer: 5 real minutes (300 seconds) = 90 game minutes
+    this.totalRealSeconds = 300.0;
+    this.remainingSeconds = 300.0;
+    this.totalGameMinutes = 90.0;
+
+    // Score State
+    this.homeScore = 0;
+    this.awayScore = 0;
+
+    // State Transitions & Timers
+    this.stateTimer = 0.0;
+    this.lastScoringTeam = null; // 'home' or 'away'
+    this.lastScorerPlayer = null;
+    this.outOfBoundsType = null; // 'throw_in', 'corner', 'goal_kick'
+    this.outOfBoundsBeneficiary = null; // 'home' or 'away'
+
+    // UI Element Cache
+    this.ui = {
+      scoreHome: null,
+      scoreAway: null,
+      clockTime: null,
+      clockGameMin: null,
+      stateBadge: null,
+      goalBanner: null,
+      goalScorer: null,
+      eventPill: null,
+      fulltimeBanner: null,
+      fulltimeScore: null
+    };
+  }
+
+  init() {
+    this.cacheUIElements();
+    this.setupEventListeners();
+  }
+
+  cacheUIElements() {
+    this.ui.scoreHome = document.getElementById('score-home');
+    this.ui.scoreAway = document.getElementById('score-away');
+    this.ui.clockTime = document.getElementById('clock-display');
+    this.ui.clockGameMin = document.getElementById('half-display');
+    this.ui.stateBadge = document.getElementById('hud-match-state-badge');
+    this.ui.goalBanner = document.getElementById('goal-banner');
+    this.ui.goalScorer = document.getElementById('goal-scorer-info');
+    this.ui.eventPill = document.getElementById('hud-event-pill');
+    this.ui.fulltimeBanner = document.getElementById('fulltime-banner');
+    this.ui.fulltimeScore = document.getElementById('fulltime-score-text');
+  }
+
+  setupEventListeners() {
+    // Restart match button in Full Time modal
+    const restartBtn = document.getElementById('btn-restart-match');
+    if (restartBtn) {
+      restartBtn.addEventListener('click', () => {
+        if (this.ui.fulltimeBanner) this.ui.fulltimeBanner.style.display = 'none';
+        this.game.startMatch(this.game.selectedHomeKey, this.game.selectedAwayKey);
+      });
+    }
+
+    const menuBtn = document.getElementById('btn-fulltime-main-menu') || document.getElementById('btn-fulltime-menu');
+    if (menuBtn) {
+      menuBtn.addEventListener('click', () => {
+        if (this.ui.fulltimeBanner) this.ui.fulltimeBanner.style.display = 'none';
+        this.game.returnToMainMenu();
+      });
+    }
+  }
+
+  startMatch(homeKey, awayKey) {
+    this.cacheUIElements();
+    this.homeScore = 0;
+    this.awayScore = 0;
+    this.remainingSeconds = this.totalRealSeconds;
+    this.stateTimer = 2.0; // 2s WarmUp introduction
+    this.lastScoringTeam = null;
+    this.lastScorerPlayer = null;
+    this.outOfBoundsType = null;
+
+    if (this.ui.fulltimeBanner) this.ui.fulltimeBanner.style.display = 'none';
+    if (this.ui.goalBanner) this.ui.goalBanner.classList.remove('show');
+    if (this.ui.eventPill) this.ui.eventPill.classList.remove('active');
+
+    this.updateHUD();
+    this.setState(MatchState.WARM_UP);
+  }
+
+  setState(newState, meta = {}) {
+    if (this.state === newState && newState !== MatchState.OUT_OF_BOUNDS) return;
+    this.previousState = this.state;
+    this.state = newState;
+
+    // Dispatch custom event for extensible systems
+    if (this.game.events) {
+      this.game.events.emit('OnMatchStateChanged', {
+        state: this.state,
+        previousState: this.previousState,
+        meta
+      });
+    }
+
+    this.onStateEnter(newState, meta);
+    this.updateHUDStateBadge();
+  }
+
+  onStateEnter(state, meta) {
+    switch (state) {
+      case MatchState.WARM_UP:
+        this.stateTimer = 2.0;
+        this.showEventPill('MAÇ BAŞLIYOR', 'warmup');
+        break;
+
+      case MatchState.KICK_OFF:
+        this.stateTimer = 0;
+        this.showEventPill('BAŞLAMA VURUŞU', 'kickoff');
+        break;
+
+      case MatchState.PLAYING:
+        this.hideEventPill();
+        break;
+
+      case MatchState.GOAL_SCORED:
+        this.stateTimer = 3.5; // 3.5 seconds goal celebration
+        this.showGoalBanner(meta.scorer, meta.isHome);
+        break;
+
+      case MatchState.OUT_OF_BOUNDS:
+        this.stateTimer = 1.4; // Brief positioning pause
+        if (meta.subType === 'throw_in') {
+          this.showEventPill('TAÇ ATIŞI', 'touchline');
+        } else if (meta.subType === 'corner') {
+          this.showEventPill('KÖŞE VURUŞU', 'corner');
+        } else if (meta.subType === 'goal_kick') {
+          this.showEventPill('AUT ATIŞI', 'goalkick');
+        }
+        break;
+
+      case MatchState.FULL_TIME:
+        this.game.isPaused = true;
+        this.game.audio.playWhistle('long');
+        this.showFullTimeModal();
+        break;
+    }
+  }
+
+  update(dt) {
+    if (this.game.isPaused && this.state !== MatchState.WARM_UP) return;
+
+    // 1. State Machine Transitions
+    switch (this.state) {
+      case MatchState.WARM_UP:
+        this.stateTimer -= dt;
+        if (this.stateTimer <= 0) {
+          this.setState(MatchState.KICK_OFF);
+        }
+        break;
+
+      case MatchState.KICK_OFF:
+        // Transition to Playing once ball is kicked or moved
+        if (this.game.ball && this.game.ballVel) {
+          const ballMoved = this.game.ball.position.lengthSq() > 0.6 || this.game.ballVel.lengthSq() > 1.2;
+          if (ballMoved) {
+            this.setState(MatchState.PLAYING);
+          }
+        }
+        break;
+
+      case MatchState.PLAYING:
+        // 2. Countdown Match Timer (300s -> 0s)
+        this.remainingSeconds -= dt;
+        if (this.remainingSeconds <= 0) {
+          this.remainingSeconds = 0;
+          this.setState(MatchState.FULL_TIME);
+        }
+        this.updateHUDClock();
+        break;
+
+      case MatchState.GOAL_SCORED:
+        this.stateTimer -= dt;
+        if (this.stateTimer <= 0) {
+          if (this.ui.goalBanner) this.ui.goalBanner.classList.remove('show');
+          // Reset players and ball to kickoff positions
+          // The conceding team gets kickoff possession
+          const kickoffTeam = this.lastScoringTeam === 'home' ? 'away' : 'home';
+          this.game.resetKickoff(kickoffTeam);
+          this.setState(MatchState.KICK_OFF);
+        }
+        break;
+
+      case MatchState.OUT_OF_BOUNDS:
+        this.stateTimer -= dt;
+        if (this.stateTimer <= 0) {
+          this.hideEventPill();
+          this.setState(MatchState.PLAYING);
+        }
+        break;
+
+      case MatchState.FULL_TIME:
+        // Handled in onStateEnter
+        break;
+    }
+  }
+
+  // --- Trigger Zone Boundary Handlers ---
+  handleTriggerZone(zoneName) {
+    if (this.state !== MatchState.PLAYING && this.state !== MatchState.KICK_OFF) return;
+
+    if (zoneName === 'GoalHome') {
+      // Ball entered Home Goal -> Away team scores!
+      this.triggerGoal(false);
+    } else if (zoneName === 'GoalAway') {
+      // Ball entered Away Goal -> Home team scores!
+      this.triggerGoal(true);
+    } else if (zoneName === 'TouchlineTop' || zoneName === 'TouchlineBottom') {
+      this.triggerThrowIn();
+    } else if (zoneName === 'GoalLineHome') {
+      this.triggerGoalLineOutOfBounds(true);
+    } else if (zoneName === 'GoalLineAway') {
+      this.triggerGoalLineOutOfBounds(false);
+    }
+  }
+
+  triggerGoal(isHomeScored) {
+    if (this.state === MatchState.GOAL_SCORED) return;
+
+    if (isHomeScored) {
+      this.homeScore++;
+      this.lastScoringTeam = 'home';
+    } else {
+      this.awayScore++;
+      this.lastScoringTeam = 'away';
+    }
+
+    const defaultScorer = isHomeScored
+      ? (this.game.homePlayers.find(p => p.data.pos === 'ST') || this.game.homePlayers[9] || this.game.homePlayers[0]).data.name
+      : (this.game.awayPlayers.find(p => p.data.pos === 'ST') || this.game.awayPlayers[9] || this.game.awayPlayers[0]).data.name;
+
+    const scorerName = (this.game.lastKicker && this.game.lastKicker.data) ? this.game.lastKicker.data.name : defaultScorer;
+    this.lastScorerPlayer = scorerName;
+
+    // Audio & Atmospheric Effects
+    this.game.audio.playGoalRoar();
+    this.game.audio.playWhistle();
+    this.game.spawnConfetti();
+    this.game.cameraShake = 0.45;
+
+    if (this.game.lastKicker) {
+      this.game.lastKicker.isCelebrating = true;
+      this.game.lastKicker.celebrationTimer = 3.5;
+    }
+
+    this.updateHUDScore();
+    this.setState(MatchState.GOAL_SCORED, { scorer: scorerName, isHome: isHomeScored });
+  }
+
+  triggerThrowIn() {
+    if (this.state === MatchState.GOAL_SCORED || this.state === MatchState.OUT_OF_BOUNDS) return;
+
+    const lastKicker = this.game.lastKicker;
+    const isLastKickerHome = lastKicker ? this.game.homePlayers.includes(lastKicker) : true;
+    const beneficiary = isLastKickerHome ? 'away' : 'home';
+
+    this.game.audio.playWhistle();
+
+    // Clamp ball to sideline
+    const ballPos = this.game.ball.position;
+    const touchZ = Math.sign(ballPos.z) * 31.8;
+    const touchX = THREE.MathUtils.clamp(ballPos.x, -45.0, 45.0);
+    this.game.ball.position.set(touchX, this.game.ballRadius, touchZ);
+    this.game.ballVel.set(0, 0, 0);
+    this.game.ballSpin.set(0, 0, 0);
+    this.game.kickCooldown = 0.6;
+
+    // Position closest outfield player of beneficiary team
+    const playersList = beneficiary === 'home' ? this.game.homePlayers : this.game.awayPlayers;
+    let nearest = playersList[1];
+    let minDist = 999;
+    playersList.forEach(p => {
+      if (p.data.pos === 'GK') return;
+      const d = p.mesh.position.distanceTo(ballPos);
+      if (d < minDist) { minDist = d; nearest = p; }
+    });
+
+    if (nearest) {
+      nearest.mesh.position.set(touchX, 0, touchZ);
+      nearest.hasPossession = true;
+      if (beneficiary === 'home') {
+        if (this.game.activePlayer && this.game.activePlayer.parts) {
+          this.game.activePlayer.parts.selectionRing.material.opacity = 0;
+        }
+        this.game.activePlayer = nearest;
+        this.game.updateHUDPlayerCard();
+      }
+    }
+
+    this.setState(MatchState.OUT_OF_BOUNDS, { subType: 'throw_in', beneficiary });
+  }
+
+  triggerGoalLineOutOfBounds(isHomeEnd) {
+    if (this.state === MatchState.GOAL_SCORED || this.state === MatchState.OUT_OF_BOUNDS) return;
+
+    // Disregard if ball is inside the goal mouth
+    const inGoalMouth = Math.abs(this.game.ball.position.z) <= (this.game.goalWidth / 2) && this.game.ball.position.y <= this.game.goalHeight;
+    if (inGoalMouth) return;
+
+    const lastKicker = this.game.lastKicker;
+    const isLastKickerHome = lastKicker ? this.game.homePlayers.includes(lastKicker) : false;
+
+    this.game.audio.playWhistle();
+
+    // Standard Football Rules:
+    // If ball went over Home end line (x < -50):
+    // - Last touched by Defending Home player -> Away Corner Kick
+    // - Last touched by Attacking Away player -> Home Goal Kick
+    // If ball went over Away end line (x > 50):
+    // - Last touched by Defending Away player -> Home Corner Kick
+    // - Last touched by Attacking Home player -> Away Goal Kick
+
+    const isCorner = isHomeEnd ? isLastKickerHome : !isLastKickerHome;
+
+    if (isCorner) {
+      // CORNER KICK
+      const cornerX = isHomeEnd ? -48.5 : 48.5;
+      const cornerZ = Math.sign(this.game.ball.position.z || 1) * 30.5;
+      this.game.ball.position.set(cornerX, this.game.ballRadius, cornerZ);
+      this.game.ballVel.set(0, 0, 0);
+      this.game.ballSpin.set(0, 0, 0);
+      this.game.kickCooldown = 0.8;
+
+      const attackingTeam = isHomeEnd ? 'away' : 'home';
+      const attackers = attackingTeam === 'home' ? this.game.homePlayers : this.game.awayPlayers;
+      const taker = attackers.find(p => p.data.pos === 'RW' || p.data.pos === 'LW' || p.data.pos === 'ST') || attackers[9] || attackers[1];
+      if (taker) {
+        taker.mesh.position.set(cornerX, 0, cornerZ);
+        taker.hasPossession = true;
+        if (attackingTeam === 'home') {
+          if (this.game.activePlayer && this.game.activePlayer.parts) {
+            this.game.activePlayer.parts.selectionRing.material.opacity = 0;
+          }
+          this.game.activePlayer = taker;
+          this.game.updateHUDPlayerCard();
+        }
+      }
+
+      this.setState(MatchState.OUT_OF_BOUNDS, { subType: 'corner', beneficiary: attackingTeam });
+    } else {
+      // GOAL KICK
+      const defendingGK = isHomeEnd ? this.game.homePlayers[0] : this.game.awayPlayers[0];
+      const kickX = isHomeEnd ? -44.0 : 44.0;
+      this.game.ball.position.set(kickX, this.game.ballRadius, 0);
+      this.game.ballVel.set(0, 0, 0);
+      this.game.ballSpin.set(0, 0, 0);
+      this.game.kickCooldown = 0.8;
+
+      if (defendingGK) {
+        defendingGK.mesh.position.set(kickX + (isHomeEnd ? 1.0 : -1.0), 0, 0);
+        defendingGK.hasPossession = true;
+        if (isHomeEnd) {
+          if (this.game.activePlayer && this.game.activePlayer.parts) {
+            this.game.activePlayer.parts.selectionRing.material.opacity = 0;
+          }
+          this.game.activePlayer = defendingGK;
+          this.game.updateHUDPlayerCard();
+        }
+      }
+
+      this.setState(MatchState.OUT_OF_BOUNDS, { subType: 'goal_kick', beneficiary: isHomeEnd ? 'home' : 'away' });
+    }
+  }
+
+  // --- HUD Synchronization ---
+  updateHUD() {
+    this.updateHUDScore();
+    this.updateHUDClock();
+    this.updateHUDStateBadge();
+  }
+
+  updateHUDScore() {
+    if (this.ui.scoreHome) this.ui.scoreHome.textContent = this.homeScore;
+    if (this.ui.scoreAway) this.ui.scoreAway.textContent = this.awayScore;
+  }
+
+  updateHUDClock() {
+    const totalSec = Math.max(0, Math.floor(this.remainingSeconds));
+    const countdownMins = Math.floor(totalSec / 60);
+    const countdownSecs = totalSec % 60;
+    const countdownStr = `${String(countdownMins).padStart(2, '0')}:${String(countdownSecs).padStart(2, '0')}`;
+
+    // Game minute equivalent from countdown progression (0' to 90')
+    const elapsedRatio = 1.0 - (this.remainingSeconds / this.totalRealSeconds);
+    const gameMin = Math.min(90, Math.floor(elapsedRatio * 90));
+
+    if (this.ui.clockTime) this.ui.clockTime.textContent = countdownStr;
+    if (this.ui.clockGameMin) this.ui.clockGameMin.textContent = `${gameMin}' Dk`;
+  }
+
+  updateHUDStateBadge() {
+    if (!this.ui.stateBadge) return;
+
+    const stateMap = {
+      [MatchState.WARM_UP]: { text: 'ISINMA', class: 'badge-warmup' },
+      [MatchState.KICK_OFF]: { text: 'BAŞLAMA VURUŞU', class: 'badge-kickoff' },
+      [MatchState.PLAYING]: { text: 'CANLI MAÇ', class: 'badge-playing' },
+      [MatchState.GOAL_SCORED]: { text: 'GOL!', class: 'badge-goal' },
+      [MatchState.OUT_OF_BOUNDS]: { text: 'DURAN TOP', class: 'badge-bounds' },
+      [MatchState.FULL_TIME]: { text: 'MAÇ SONU', class: 'badge-fulltime' }
+    };
+
+    const current = stateMap[this.state] || { text: this.state.toUpperCase(), class: '' };
+    this.ui.stateBadge.textContent = current.text;
+    this.ui.stateBadge.className = `hud-state-badge ${current.class}`;
+  }
+
+  showGoalBanner(scorer, isHome) {
+    if (!this.ui.goalBanner) return;
+    const teamName = isHome 
+      ? (this.game.currentHomeTeam?.shortName || 'EV SAHİBİ')
+      : (this.game.currentAwayTeam?.shortName || 'DEPLASMAN');
+
+    if (this.ui.goalScorer) {
+      this.ui.goalScorer.textContent = `${scorer} (${teamName}) harika bir vuruşla ağları havalandırdı!`;
+    }
+    this.ui.goalBanner.classList.add('show');
+  }
+
+  showEventPill(text, type) {
+    if (!this.ui.eventPill) return;
+    this.ui.eventPill.textContent = text;
+    this.ui.eventPill.className = `hud-event-pill active pill-${type}`;
+  }
+
+  hideEventPill() {
+    if (!this.ui.eventPill) return;
+    this.ui.eventPill.classList.remove('active');
+  }
+
+  showFullTimeModal() {
+    if (!this.ui.fulltimeBanner) return;
+    const hName = this.game.currentHomeTeam?.shortName || 'EV SAHİBİ';
+    const aName = this.game.currentAwayTeam?.shortName || 'DEPLASMAN';
+    if (this.ui.fulltimeScore) {
+      this.ui.fulltimeScore.textContent = `${hName} ${this.homeScore} - ${this.awayScore} ${aName}`;
+    }
+    this.ui.fulltimeBanner.style.display = 'flex';
+  }
+}
+
+/**
  * PlayerLocomotionEngine
  * Handles 8-directional movement, acceleration curves, sprint transitions,
  * stamina dynamics, and the critical speed difference between running with vs without the ball.
@@ -682,6 +1153,8 @@ class FootballGame {
     this.triggerZones = new PitchTriggerZoneSystem(this.events);
     this.locomotionEngine = new PlayerLocomotionEngine(this);
     this.ballPhysicsEngine = new BallPhysicsEngine(this);
+    this.matchManager = new MatchManager(this);
+    this.matchManager.init();
 
     this.initWorld();
     this.initInput();
@@ -701,8 +1174,10 @@ class FootballGame {
   }
 
   onBallEnteredTrigger(triggerZoneName) {
-    // Extensible hook for offside zones, penalty area fouls, goal-line technology
-    // console.log(`[Event] OnBallEnteredTrigger: ${triggerZoneName}`);
+    // Forward trigger zone entries to MatchManager rules system
+    if (this.matchManager) {
+      this.matchManager.handleTriggerZone(triggerZoneName);
+    }
   }
 
   // --- World Creation (Pitch, Stadium, Floodlights, Goals) ---
@@ -2277,7 +2752,11 @@ class FootballGame {
     const dt = 0.016;
 
     if (!this.isPaused) {
-      this.updateMatchClock(dt);
+      if (this.matchManager) {
+        this.matchManager.update(dt);
+      } else {
+        this.updateMatchClock(dt);
+      }
       this.updateBallPhysics(dt);
       this.updatePlayers(dt);
       this.updatePowerBar(dt);
@@ -2536,6 +3015,16 @@ class FootballGame {
   }
 
   handleOutOfBounds(isGoalKick) {
+    if (this.matchManager) {
+      if (isGoalKick) {
+        const isHomeEnd = this.ball.position.x < 0;
+        this.matchManager.triggerGoalLineOutOfBounds(isHomeEnd);
+      } else {
+        this.matchManager.triggerThrowIn();
+      }
+      return;
+    }
+
     if (this.isGoalSequence) return;
     this.audio.playWhistle();
 
@@ -2587,12 +3076,20 @@ class FootballGame {
     const halfGW = this.goalWidth / 2; // 3.66
 
     // Home Team Goal Check (Ball crosses +50.0 into Away goal)
-    if (!this.isGoalSequence && this.ball.position.x >= halfL && this.ball.position.x <= halfL + 2.5 && Math.abs(this.ball.position.z) <= halfGW && this.ball.position.y <= this.goalHeight) {
-      this.triggerGoal(true);
+    if (this.ball.position.x >= halfL && this.ball.position.x <= halfL + 2.5 && Math.abs(this.ball.position.z) <= halfGW && this.ball.position.y <= this.goalHeight) {
+      if (this.matchManager) {
+        this.matchManager.triggerGoal(true);
+      } else if (!this.isGoalSequence) {
+        this.triggerGoal(true);
+      }
     }
     // Away Team Goal Check (Ball crosses -50.0 into Home goal)
-    else if (!this.isGoalSequence && this.ball.position.x <= -halfL && this.ball.position.x >= -halfL - 2.5 && Math.abs(this.ball.position.z) <= halfGW && this.ball.position.y <= this.goalHeight) {
-      this.triggerGoal(false);
+    else if (this.ball.position.x <= -halfL && this.ball.position.x >= -halfL - 2.5 && Math.abs(this.ball.position.z) <= halfGW && this.ball.position.y <= this.goalHeight) {
+      if (this.matchManager) {
+        this.matchManager.triggerGoal(false);
+      } else if (!this.isGoalSequence) {
+        this.triggerGoal(false);
+      }
     }
   }
 
@@ -2630,13 +3127,13 @@ class FootballGame {
     }
   }
 
-  resetKickoff() {
+  resetKickoff(kickingTeam = 'home') {
     this.ball.position.set(0, this.ballRadius, 0);
     this.ballVel.set(0, 0, 0);
     this.ballSpin.set(0, 0, 0);
     this.lastKicker = null;
     this.passReceiver = null;
-    this.kickCooldown = 0;
+    this.kickCooldown = 0.3;
 
     // Reset formations
     this.homePlayers.forEach((p, i) => {
@@ -2645,6 +3142,7 @@ class FootballGame {
       p.mesh.rotation.set(0, Math.PI / 2, 0);
       p.hasPossession = false;
       p.isCelebrating = false;
+      if (p.parts && p.parts.selectionRing) p.parts.selectionRing.material.opacity = 0;
     });
 
     this.awayPlayers.forEach((p, i) => {
@@ -2653,15 +3151,31 @@ class FootballGame {
       p.mesh.rotation.set(0, -Math.PI / 2, 0);
       p.hasPossession = false;
       p.isCelebrating = false;
+      if (p.parts && p.parts.selectionRing) p.parts.selectionRing.material.opacity = 0;
     });
 
-    // Striker receives kickoff
-    const kicker = this.homePlayers.find(p => p.data.pos === 'ST') || this.homePlayers[9] || this.homePlayers[0];
-    kicker.mesh.position.set(-0.5, 0, 0);
-    kicker.hasPossession = true;
-    if (this.activePlayer) this.activePlayer.parts.selectionRing.material.opacity = 0;
-    this.activePlayer = kicker;
-    this.updateHUDPlayerCard();
+    // Determine kickoff taker based on conceding/restarting team
+    if (kickingTeam === 'away') {
+      const awayKicker = this.awayPlayers.find(p => p.data.pos === 'ST') || this.awayPlayers[9] || this.awayPlayers[0];
+      awayKicker.mesh.position.set(0.6, 0, 0);
+      awayKicker.hasPossession = true;
+      // Keep user control on active home player
+      const homeClosest = this.homePlayers.find(p => p.data.pos === 'ST') || this.homePlayers[9] || this.homePlayers[0];
+      this.activePlayer = homeClosest;
+      if (this.activePlayer && this.activePlayer.parts && this.activePlayer.parts.selectionRing) {
+        this.activePlayer.parts.selectionRing.material.opacity = 0.85;
+      }
+      this.updateHUDPlayerCard();
+    } else {
+      const homeKicker = this.homePlayers.find(p => p.data.pos === 'ST') || this.homePlayers[9] || this.homePlayers[0];
+      homeKicker.mesh.position.set(-0.6, 0, 0);
+      homeKicker.hasPossession = true;
+      this.activePlayer = homeKicker;
+      if (this.activePlayer && this.activePlayer.parts && this.activePlayer.parts.selectionRing) {
+        this.activePlayer.parts.selectionRing.material.opacity = 0.85;
+      }
+      this.updateHUDPlayerCard();
+    }
   }
 
   // --- Universal Player Skeletal Locomotion & Expressive Animation ---
@@ -3709,7 +4223,12 @@ class FootballGame {
     this.currentCamIndex = 0; // Broadcast Cam
     this.screenState = 'match';
     this.isPaused = false;
-    this.resetKickoff();
+    this.resetKickoff('home');
+
+    // Start Match Manager State & Timer
+    if (this.matchManager) {
+      this.matchManager.startMatch(this.selectedHomeKey, this.selectedAwayKey);
+    }
 
     // Sound & Atmosphere transition
     this.audio.stopMusic();

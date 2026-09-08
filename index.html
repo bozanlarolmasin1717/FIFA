@@ -741,8 +741,11 @@
           <span class="team-color-dot away-dot" id="hud-away-dot"></span>
         </div>
         <div class="match-clock">
-          <span class="clock-time" id="clock-display">00:00</span>
-          <span class="clock-half" id="half-display">1. YARI</span>
+          <span class="clock-time" id="clock-display">05:00</span>
+          <span class="clock-half" id="half-display">0' Dk</span>
+        </div>
+        <div class="hud-match-state-container">
+          <span class="hud-state-badge badge-warmup" id="hud-match-state-badge">ISINMA</span>
         </div>
       </div>
 
@@ -806,9 +809,20 @@
       </div>
     </div>
 
-    <!-- Goal Celebration Pop-up -->
+    <!-- Match Event Pill Notification (Throw-in, Corner, Goal Kick, State change) -->
+    <div id="hud-event-pill" class="hud-event-pill">BAŞLAMA VURUŞU</div>
+
+    <!-- Goal Celebration Notification Banner -->
     <div id="goal-banner">
-      <div class="goal-title">GOL!</div>
+      <div class="goal-header-row">
+        <div class="goal-icon-frame">
+          <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+          </svg>
+        </div>
+        <div class="goal-title">GOAL!</div>
+      </div>
       <div class="goal-subtitle" id="goal-scorer-info">Müthiş bir vuruşla ağları sarstı!</div>
     </div>
 
