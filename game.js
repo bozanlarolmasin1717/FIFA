@@ -635,10 +635,35 @@ class MatchManager {
     this.game.spawnConfetti();
     this.game.cameraShake = 0.45;
 
-    if (this.game.lastKicker) {
-      this.game.lastKicker.isCelebrating = true;
-      this.game.lastKicker.celebrationTimer = 3.5;
+    // Trigger celebrations & reactions
+    const scoringSquad = isHomeScored ? this.game.homePlayers : this.game.awayPlayers;
+    const concedingSquad = isHomeScored ? this.game.awayPlayers : this.game.homePlayers;
+
+    let scorerObj = this.game.lastKicker;
+    if (!scorerObj || !scoringSquad.includes(scorerObj)) {
+      scorerObj = scoringSquad.find(p => p.data.pos === 'ST') || scoringSquad[9] || scoringSquad[0];
     }
+
+    if (scorerObj) {
+      scorerObj.isCelebrating = true;
+      scorerObj.celebrationTimer = 4.5;
+      const isRonaldo = scorerObj.data && scorerObj.data.name.includes('Ronaldo');
+      scorerObj.celebrationType = isRonaldo ? 'siuuu' : (Math.random() < 0.5 ? 'knee_slide' : 'siuuu');
+    }
+
+    // Teammates rush to celebrate
+    scoringSquad.forEach(p => {
+      if (p !== scorerObj && !p.isSentOff) {
+        p.isTeammateCelebrating = true;
+      }
+    });
+
+    // Conceding team disappointment
+    concedingSquad.forEach(p => {
+      if (!p.isSentOff) {
+        p.isConcedingDisappointed = true;
+      }
+    });
 
     this.updateHUDScore();
     this.setState(MatchState.GOAL_SCORED, { scorer: scorerName, isHome: isHomeScored });
@@ -1156,9 +1181,15 @@ class FootballGame {
     this.matchManager = new MatchManager(this);
     this.matchManager.init();
 
+    // Referee & Rules State
+    this.referee = null;
+    this.foulCooldown = 0;
+    this.subBoardTimeout = null;
+
     this.initWorld();
     this.initInput();
     this.initUI();
+    this.initSplashEffects();
     this.animate();
   }
 
@@ -2335,6 +2366,382 @@ class FootballGame {
       this.scene.add(p.mesh);
       this.awayPlayers.push(p);
     });
+
+    // Spawn 3D Official Match Referee
+    this.createReferee();
+  }
+
+  // --- OFFICIAL 3D REFEREE SYSTEM & CARD MECHANICS ---
+  createReferee() {
+    if (this.referee && this.referee.mesh) {
+      this.scene.remove(this.referee.mesh);
+    }
+
+    const group = new THREE.Group();
+
+    // Vibrant Neon Lime / Yellow Referee Shirt & Black Shorts
+    const refShirtMat = new THREE.MeshStandardMaterial({ color: 0xcbfb45, roughness: 0.45 });
+    const blackMat = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.6 });
+    const skinMat = new THREE.MeshStandardMaterial({ color: 0xd8a47f, roughness: 0.65 });
+    const hairMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.85 });
+
+    // 1. Torso
+    const torsoGeo = new THREE.CylinderGeometry(0.30, 0.24, 0.82, 12);
+    const torso = new THREE.Mesh(torsoGeo, refShirtMat);
+    torso.position.y = 1.34;
+    torso.castShadow = true;
+    group.add(torso);
+
+    // Collar
+    const collarGeo = new THREE.TorusGeometry(0.15, 0.025, 8, 16);
+    collarGeo.rotateX(Math.PI / 2);
+    const collar = new THREE.Mesh(collarGeo, blackMat);
+    collar.position.set(0, 0.40, 0);
+    torso.add(collar);
+
+    // FIFA Referee Badge on Chest
+    const badgeCanvas = document.createElement('canvas');
+    badgeCanvas.width = 128;
+    badgeCanvas.height = 64;
+    const bctx = badgeCanvas.getContext('2d');
+    bctx.fillStyle = '#0f172a';
+    bctx.fillRect(0, 0, 128, 64);
+    bctx.fillStyle = '#f59e0b';
+    bctx.fillRect(4, 4, 120, 6);
+    bctx.fillStyle = '#ffffff';
+    bctx.font = 'bold 26px sans-serif';
+    bctx.textAlign = 'center';
+    bctx.fillText('FIFA REF', 64, 46);
+    const badgeTex = new THREE.CanvasTexture(badgeCanvas);
+    const badgePlane = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 0.12), new THREE.MeshBasicMaterial({ map: badgeTex, transparent: true }));
+    badgePlane.position.set(0.08, 0.12, 0.25);
+    torso.add(badgePlane);
+
+    // 2. Shorts / Hips
+    const hipsGeo = new THREE.CylinderGeometry(0.26, 0.27, 0.36, 12);
+    const hips = new THREE.Mesh(hipsGeo, blackMat);
+    hips.position.y = 0.88;
+    hips.castShadow = true;
+    group.add(hips);
+
+    // 3. Head & Neck
+    const neckGeo = new THREE.CylinderGeometry(0.09, 0.10, 0.16, 8);
+    const neck = new THREE.Mesh(neckGeo, skinMat);
+    neck.position.y = 0.45;
+    torso.add(neck);
+
+    const headGeo = new THREE.SphereGeometry(0.21, 16, 16);
+    headGeo.scale(0.9, 1.05, 0.95);
+    const head = new THREE.Mesh(headGeo, skinMat);
+    head.position.y = 0.14;
+    head.castShadow = true;
+    neck.add(head);
+
+    const hairGeo = new THREE.BoxGeometry(0.38, 0.18, 0.40);
+    const hair = new THREE.Mesh(hairGeo, hairMat);
+    hair.position.y = 0.12;
+    head.add(hair);
+
+    // 4. Arms & Cards
+    const leftArm = new THREE.Group();
+    leftArm.position.set(-0.35, 0.36, 0);
+    const lUpper = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.06, 0.34, 8), refShirtMat);
+    lUpper.position.y = -0.17;
+    leftArm.add(lUpper);
+    const lFore = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.32, 8), skinMat);
+    lFore.position.y = -0.46;
+    leftArm.add(lFore);
+    torso.add(leftArm);
+
+    const rightArm = new THREE.Group();
+    rightArm.position.set(0.35, 0.36, 0);
+    const rUpper = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.06, 0.34, 8), refShirtMat);
+    rUpper.position.y = -0.17;
+    rightArm.add(rUpper);
+    const rFore = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.32, 8), skinMat);
+    rFore.position.y = -0.46;
+    rightArm.add(rFore);
+
+    // 3D Yellow Card Mesh in Hand
+    const yellowCardGeo = new THREE.BoxGeometry(0.12, 0.18, 0.005);
+    const yellowCardMat = new THREE.MeshStandardMaterial({
+      color: 0xfacc15,
+      metalness: 0.3,
+      roughness: 0.2,
+      emissive: 0xca8a04,
+      emissiveIntensity: 0.5
+    });
+    const yellowCardMesh = new THREE.Mesh(yellowCardGeo, yellowCardMat);
+    yellowCardMesh.position.set(0, -0.65, 0.08);
+    yellowCardMesh.visible = false;
+    rightArm.add(yellowCardMesh);
+
+    // 3D Red Card Mesh in Hand
+    const redCardGeo = new THREE.BoxGeometry(0.12, 0.18, 0.005);
+    const redCardMat = new THREE.MeshStandardMaterial({
+      color: 0xef4444,
+      metalness: 0.3,
+      roughness: 0.2,
+      emissive: 0xb91c1c,
+      emissiveIntensity: 0.6
+    });
+    const redCardMesh = new THREE.Mesh(redCardGeo, redCardMat);
+    redCardMesh.position.set(0, -0.65, 0.08);
+    redCardMesh.visible = false;
+    rightArm.add(redCardMesh);
+
+    torso.add(rightArm);
+
+    // 5. Legs & Boots (Black socks & boots)
+    const leftLeg = new THREE.Group();
+    leftLeg.position.set(-0.16, -0.18, 0);
+    const lThigh = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.08, 0.38, 8), skinMat);
+    lThigh.position.y = -0.19;
+    leftLeg.add(lThigh);
+    const lShin = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.07, 0.38, 8), blackMat);
+    lShin.position.y = -0.52;
+    leftLeg.add(lShin);
+    const lBoot = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.10, 0.26), blackMat);
+    lBoot.position.set(0, -0.74, 0.06);
+    leftLeg.add(lBoot);
+    hips.add(leftLeg);
+
+    const rightLeg = new THREE.Group();
+    rightLeg.position.set(0.16, -0.18, 0);
+    const rThigh = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.08, 0.38, 8), skinMat);
+    rThigh.position.y = -0.19;
+    rightLeg.add(rThigh);
+    const rShin = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.07, 0.38, 8), blackMat);
+    rShin.position.y = -0.52;
+    rightLeg.add(rShin);
+    const rBoot = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.10, 0.26), blackMat);
+    rBoot.position.set(0, -0.74, 0.06);
+    rightLeg.add(rBoot);
+    hips.add(rightLeg);
+
+    // Soft Contact Shadow
+    const contactShadow = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.85, 0.85),
+      new THREE.MeshBasicMaterial({ color: 0x06140a, transparent: true, opacity: 0.45, depthWrite: false })
+    );
+    contactShadow.rotation.x = -Math.PI / 2;
+    contactShadow.position.y = 0.015;
+    group.add(contactShadow);
+
+    group.position.set(0, 0, 8);
+    this.scene.add(group);
+
+    this.referee = {
+      mesh: group,
+      parts: { torso, hips, head, leftArm, rightArm, leftLeg, rightLeg, yellowCardMesh, redCardMesh },
+      state: 'patrol',
+      stateTimer: 0,
+      targetPos: new THREE.Vector3(0, 0, 8),
+      runCycle: 0,
+      activeCardType: null,
+      foulPlayer: null
+    };
+  }
+
+  updateReferee(dt) {
+    if (!this.referee || !this.ball) return;
+    const ref = this.referee;
+    const parts = ref.parts;
+
+    if (ref.state === 'show_card') {
+      ref.stateTimer -= dt;
+      // Right arm raised high holding card
+      parts.rightArm.rotation.x = -2.85;
+      parts.rightArm.rotation.z = 0.25;
+      parts.leftArm.rotation.x = -0.5;
+      parts.torso.rotation.x = -0.05;
+      parts.leftLeg.rotation.x = 0;
+      parts.rightLeg.rotation.x = 0;
+
+      if (ref.activeCardType === 'yellow') {
+        parts.yellowCardMesh.visible = true;
+        parts.redCardMesh.visible = false;
+      } else if (ref.activeCardType === 'red') {
+        parts.yellowCardMesh.visible = false;
+        parts.redCardMesh.visible = true;
+      }
+
+      // Face offending player
+      if (ref.foulPlayer && ref.foulPlayer.mesh) {
+        const dir = new THREE.Vector3().subVectors(ref.foulPlayer.mesh.position, ref.mesh.position);
+        ref.mesh.rotation.y = Math.atan2(dir.x, dir.z);
+      }
+
+      if (ref.stateTimer <= 0) {
+        parts.yellowCardMesh.visible = false;
+        parts.redCardMesh.visible = false;
+        parts.rightArm.rotation.x = 0;
+        parts.rightArm.rotation.z = 0;
+        ref.state = 'patrol';
+        ref.activeCardType = null;
+        this.hideFoulCardBanner();
+      }
+      return;
+    }
+
+    if (ref.state === 'sprint_to_foul') {
+      const target = ref.targetPos;
+      const toTarget = new THREE.Vector3().subVectors(target, ref.mesh.position);
+      toTarget.y = 0;
+      const dist = toTarget.length();
+
+      if (dist > 2.2) {
+        toTarget.normalize();
+        ref.mesh.position.addScaledVector(toTarget, dt * 11);
+        ref.mesh.rotation.y = Math.atan2(toTarget.x, toTarget.z);
+
+        // Sprinting animation
+        ref.runCycle += dt * 16;
+        const stride = Math.sin(ref.runCycle);
+        parts.leftLeg.rotation.x = stride * 0.7;
+        parts.rightLeg.rotation.x = -stride * 0.7;
+        parts.leftArm.rotation.x = -stride * 0.6;
+        parts.rightArm.rotation.x = stride * 0.6;
+        parts.torso.rotation.x = 0.15;
+      } else {
+        // Arrived at foul spot! Show card!
+        ref.state = 'show_card';
+        ref.stateTimer = 2.8;
+      }
+      return;
+    }
+
+    // Normal patrol: follows the ball diagonally keeping 10-14m distance
+    const ballPos = this.ball.position;
+    const offsetX = ballPos.x > 0 ? -11 : 11;
+    const offsetZ = Math.sin(ballPos.x * 0.05) * 8 + (ballPos.z > 0 ? -8 : 8);
+    ref.targetPos.set(
+      THREE.MathUtils.clamp(ballPos.x + offsetX, -40, 40),
+      0,
+      THREE.MathUtils.clamp(ballPos.z + offsetZ, -24, 24)
+    );
+
+    const toTarget = new THREE.Vector3().subVectors(ref.targetPos, ref.mesh.position);
+    toTarget.y = 0;
+    const dist = toTarget.length();
+
+    if (dist > 3.0) {
+      toTarget.normalize();
+      const speed = Math.min(dist * 2.2, 8.5);
+      ref.mesh.position.addScaledVector(toTarget, dt * speed);
+      ref.mesh.rotation.y = THREE.MathUtils.lerp(ref.mesh.rotation.y, Math.atan2(toTarget.x, toTarget.z), dt * 8);
+
+      ref.runCycle += dt * speed * 1.6;
+      const stride = Math.sin(ref.runCycle);
+      parts.leftLeg.rotation.x = stride * 0.5;
+      parts.rightLeg.rotation.x = -stride * 0.5;
+      parts.leftArm.rotation.x = -stride * 0.45;
+      parts.rightArm.rotation.x = stride * 0.45;
+      parts.torso.rotation.x = 0.08;
+    } else {
+      // Idle referee observing play
+      parts.leftLeg.rotation.x = THREE.MathUtils.lerp(parts.leftLeg.rotation.x, 0, dt * 10);
+      parts.rightLeg.rotation.x = THREE.MathUtils.lerp(parts.rightLeg.rotation.x, 0, dt * 10);
+      parts.leftArm.rotation.x = THREE.MathUtils.lerp(parts.leftArm.rotation.x, 0, dt * 10);
+      parts.rightArm.rotation.x = THREE.MathUtils.lerp(parts.rightArm.rotation.x, 0, dt * 10);
+      parts.torso.rotation.x = THREE.MathUtils.lerp(parts.torso.rotation.x, 0, dt * 10);
+
+      // Look towards ball
+      const toBall = new THREE.Vector3().subVectors(ballPos, ref.mesh.position);
+      ref.mesh.rotation.y = THREE.MathUtils.lerp(ref.mesh.rotation.y, Math.atan2(toBall.x, toBall.z), dt * 5);
+    }
+  }
+
+  triggerFoul(fouler, victim, isSlide = false) {
+    if (this.foulCooldown > 0 || !fouler || !victim) return;
+    this.foulCooldown = 4.5;
+
+    // 1. Victim reaction: falls to turf and rolls
+    victim.stumbleTimer = 3.5;
+    victim.isFouled = true;
+    victim.hasPossession = false;
+
+    // 2. Fouler reaction: innocence protest
+    fouler.isFouling = true;
+    fouler.hasPossession = false;
+    fouler.vel.set(0, 0, 0);
+
+    // 3. Card assessment
+    fouler.yellowCards = (fouler.yellowCards || 0) + 1;
+    const isSecondYellow = fouler.yellowCards === 2;
+    const isDirectRed = isSlide && (Math.abs(victim.mesh.position.x) > 35) && (fouler.yellowCards >= 1 || Math.random() < 0.35);
+    const isRed = isSecondYellow || isDirectRed || (fouler.yellowCards >= 2);
+
+    const cardType = isRed ? 'red' : 'yellow';
+    const reasonText = isSecondYellow ? '2. Sarıdan Kırmızı Kart' : (isDirectRed ? 'Son Adam / Sert Faul' : 'Sert Müdahale');
+
+    // 4. Referee runs over & displays card
+    if (this.referee) {
+      this.referee.state = 'sprint_to_foul';
+      this.referee.targetPos.copy(victim.mesh.position).add(new THREE.Vector3(1.4, 0, 1.4));
+      this.referee.activeCardType = cardType;
+      this.referee.foulPlayer = fouler;
+    }
+
+    // Audio cues
+    this.audio.playCardWhistle(isRed);
+
+    // 5. Broadcast HUD Banner
+    this.showFoulCardBanner(fouler.data.name, fouler.data.num, cardType, reasonText);
+
+    // 6. If Red Card: player is sent off!
+    if (isRed) {
+      fouler.isSentOff = true;
+      setTimeout(() => {
+        fouler.isWalkingOff = true;
+      }, 2500);
+    }
+
+    // 7. Free Kick setup at foul spot
+    const foulSpot = victim.mesh.position.clone();
+    setTimeout(() => {
+      this.ball.position.set(foulSpot.x, this.ballRadius, foulSpot.z);
+      this.ballVel.set(0, 0, 0);
+      this.ballSpin.set(0, 0, 0);
+      fouler.isFouling = false;
+      victim.isFouled = false;
+    }, 3500);
+  }
+
+  showFoulCardBanner(name, num, cardType, reason) {
+    const banner = document.getElementById('foul-card-banner');
+    const title = document.getElementById('foul-banner-title');
+    const pName = document.getElementById('foul-player-name');
+    const pNum = document.getElementById('foul-player-num');
+    const pReason = document.getElementById('foul-reason-text');
+    const symbol = document.getElementById('foul-card-symbol');
+
+    if (!banner) return;
+    if (title) title.textContent = cardType === 'red' ? 'KIRMIZI KART' : 'SARI KART';
+    if (pName) pName.textContent = name.toUpperCase();
+    if (pNum) pNum.textContent = `#${num}`;
+    if (pReason) pReason.textContent = reason;
+
+    if (symbol) {
+      symbol.className = `referee-card-symbol ${cardType}`;
+    }
+
+    if (cardType === 'red') {
+      banner.classList.add('red-card-border');
+    } else {
+      banner.classList.remove('red-card-border');
+    }
+
+    banner.classList.add('show');
+    if (this.foulBannerTimeout) clearTimeout(this.foulBannerTimeout);
+    this.foulBannerTimeout = setTimeout(() => {
+      banner.classList.remove('show');
+    }, 4000);
+  }
+
+  hideFoulCardBanner() {
+    const banner = document.getElementById('foul-card-banner');
+    if (banner) banner.classList.remove('show');
   }
 
   // --- Input Management ---
@@ -2360,6 +2767,7 @@ class FootballGame {
 
       // Substitutions Menu (Z key)
       if (e.code === 'KeyZ') {
+        this.populateSubsModal();
         this.toggleModal('modal-subs');
       }
 
@@ -2660,7 +3068,7 @@ class FootballGame {
   }
 
   performSlideTackle() {
-    if (!this.activePlayer || this.activePlayer.isTackling) return;
+    if (!this.activePlayer || this.activePlayer.isTackling || this.activePlayer.isSentOff) return;
     this.activePlayer.isTackling = true;
     this.activePlayer.tackleTimer = 0.65;
     this.activePlayer.stamina = Math.max(0, this.activePlayer.stamina - 15);
@@ -2672,7 +3080,30 @@ class FootballGame {
     );
     this.activePlayer.vel.copy(forward).multiplyScalar(16);
 
-    const distToBall = this.activePlayer.mesh.position.distanceTo(this.ball.position);
+    const tacklerPos = this.activePlayer.mesh.position;
+    const distToBall = tacklerPos.distanceTo(this.ball.position);
+
+    // Check collision with opponent players
+    let hitOpponent = null;
+    this.awayPlayers.forEach(op => {
+      if (op.isSentOff) return;
+      const d = tacklerPos.distanceTo(op.mesh.position);
+      if (d < 2.5) hitOpponent = op;
+    });
+
+    if (hitOpponent && this.foulCooldown <= 0) {
+      // Check if tackle was from behind
+      const opDir = new THREE.Vector3(Math.sin(hitOpponent.mesh.rotation.y), 0, Math.cos(hitOpponent.mesh.rotation.y));
+      const dot = forward.dot(opDir);
+      const isMissedBall = distToBall > 2.0;
+
+      if (dot > 0.05 || isMissedBall) {
+        // FOUL!
+        this.triggerFoul(this.activePlayer, hitOpponent, true);
+        return;
+      }
+    }
+
     if (distToBall < 2.8) {
       const tackleDir = forward.clone().add(new THREE.Vector3(0, 0.3, 0)).normalize();
       this.ballVel.copy(tackleDir).multiplyScalar(22);
@@ -2757,8 +3188,10 @@ class FootballGame {
       } else {
         this.updateMatchClock(dt);
       }
+      if (this.foulCooldown > 0) this.foulCooldown -= dt;
       this.updateBallPhysics(dt);
       this.updatePlayers(dt);
+      this.updateReferee(dt);
       this.updatePowerBar(dt);
     }
 
@@ -3135,22 +3568,34 @@ class FootballGame {
     this.passReceiver = null;
     this.kickCooldown = 0.3;
 
-    // Reset formations
+    // Reset formations & animation states
     this.homePlayers.forEach((p, i) => {
       const slot = this.baseFormationHome[i] || { x: -20, z: 0 };
-      p.mesh.position.set(slot.x, 0, slot.z);
-      p.mesh.rotation.set(0, Math.PI / 2, 0);
+      if (!p.isSentOff) {
+        p.mesh.position.set(slot.x, 0, slot.z);
+        p.mesh.rotation.set(0, Math.PI / 2, 0);
+      }
       p.hasPossession = false;
       p.isCelebrating = false;
+      p.isTeammateCelebrating = false;
+      p.isConcedingDisappointed = false;
+      p.isFouled = false;
+      p.isFouling = false;
       if (p.parts && p.parts.selectionRing) p.parts.selectionRing.material.opacity = 0;
     });
 
     this.awayPlayers.forEach((p, i) => {
       const slot = this.baseFormationAway[i] || { x: 20, z: 0 };
-      p.mesh.position.set(slot.x, 0, slot.z);
-      p.mesh.rotation.set(0, -Math.PI / 2, 0);
+      if (!p.isSentOff) {
+        p.mesh.position.set(slot.x, 0, slot.z);
+        p.mesh.rotation.set(0, -Math.PI / 2, 0);
+      }
       p.hasPossession = false;
       p.isCelebrating = false;
+      p.isTeammateCelebrating = false;
+      p.isConcedingDisappointed = false;
+      p.isFouled = false;
+      p.isFouling = false;
       if (p.parts && p.parts.selectionRing) p.parts.selectionRing.material.opacity = 0;
     });
 
@@ -3190,7 +3635,46 @@ class FootballGame {
       return;
     }
 
-    // 2. Stumble animation (when tackled, dispossessed, or physical collision)
+    // 2. Foul fall & roll reaction (Holding shin/ankle on turf)
+    if (player.isFouled && player.stumbleTimer > 0) {
+      player.parts.torso.rotation.x = -1.35;
+      player.parts.torso.rotation.z = 0.45;
+      player.parts.leftLeg.rotation.x = 1.1;
+      player.parts.rightLeg.rotation.x = 1.4;
+      player.parts.leftArm.rotation.x = 1.2;
+      player.parts.rightArm.rotation.x = 1.0;
+      player.parts.torso.position.y = 0.38;
+      return;
+    }
+
+    // Fouler innocence protest pose ("Ben yapmadım!")
+    if (player.isFouling) {
+      player.parts.leftArm.rotation.x = -1.2;
+      player.parts.leftArm.rotation.z = -0.55;
+      player.parts.rightArm.rotation.x = -1.2;
+      player.parts.rightArm.rotation.z = 0.55;
+      player.parts.torso.rotation.x = -0.15;
+      return;
+    }
+
+    // Red-carded player walking off to the tunnel
+    if (player.isWalkingOff) {
+      player.parts.torso.rotation.x = 0.35; // head hung low
+      player.parts.leftArm.rotation.x = 0.2;
+      player.parts.rightArm.rotation.x = 0.2;
+      player.runCycle += dt * 6;
+      player.parts.leftLeg.rotation.x = Math.sin(player.runCycle) * 0.35;
+      player.parts.rightLeg.rotation.x = -Math.sin(player.runCycle) * 0.35;
+      const sideDir = Math.sign(player.mesh.position.z) || 1;
+      player.mesh.position.z += dt * sideDir * 3.8;
+      if (Math.abs(player.mesh.position.z) > 36) {
+        player.mesh.visible = false;
+        player.isWalkingOff = false;
+      }
+      return;
+    }
+
+    // Standard brief stumble animation (when dispossessed)
     if (player.stumbleTimer > 0) {
       player.stumbleTimer -= dt;
       player.parts.torso.rotation.x = -0.28;
@@ -3225,14 +3709,71 @@ class FootballGame {
       player.parts.rightArm.rotation.z = THREE.MathUtils.lerp(player.parts.rightArm.rotation.z, 0, dt * 6);
     }
 
-    // 5. Goal Celebration animation
+    // 5. Goal Celebrations & Reactions
     if (player.isCelebrating) {
-      player.runCycle += dt * 12;
-      player.parts.leftArm.rotation.x = -2.6;
-      player.parts.rightArm.rotation.x = -2.6;
-      player.parts.leftLeg.rotation.x = Math.sin(player.runCycle) * 0.5;
-      player.parts.rightLeg.rotation.x = -Math.sin(player.runCycle) * 0.5;
-      player.parts.torso.position.y = player.baseTorsoY + Math.abs(Math.sin(player.runCycle)) * 0.12;
+      player.runCycle += dt * 11;
+      const cType = player.celebrationType || 'siuuu';
+
+      if (cType === 'siuuu') {
+        // Ronaldo SIUUU: Jump, 180° airborne spin, thrust arms down!
+        if (player.celebrationTimer > 1.8) {
+          player.parts.torso.position.y = player.baseTorsoY + 0.85;
+          player.mesh.rotation.y += dt * 11;
+          player.parts.leftArm.rotation.x = -2.8;
+          player.parts.rightArm.rotation.x = -2.8;
+          player.parts.leftLeg.rotation.x = 0.45;
+          player.parts.rightLeg.rotation.x = -0.45;
+        } else {
+          // Landing power stance with chest out and arms locked down
+          player.parts.torso.position.y = player.baseTorsoY - 0.12;
+          player.parts.leftArm.rotation.x = 0.95;
+          player.parts.leftArm.rotation.z = -0.55;
+          player.parts.rightArm.rotation.x = 0.95;
+          player.parts.rightArm.rotation.z = 0.55;
+          player.parts.leftLeg.rotation.x = 0.4;
+          player.parts.rightLeg.rotation.x = 0.4;
+          player.parts.torso.rotation.x = -0.25;
+        }
+      } else if (cType === 'knee_slide') {
+        // Knee slide on turf with fists clenched
+        player.parts.torso.position.y = 0.62;
+        player.parts.torso.rotation.x = -0.45;
+        player.parts.leftLeg.rotation.x = 1.7;
+        player.parts.rightLeg.rotation.x = 1.7;
+        player.parts.leftArm.rotation.x = -1.2;
+        player.parts.leftArm.rotation.z = -0.45;
+        player.parts.rightArm.rotation.x = -1.2;
+        player.parts.rightArm.rotation.z = 0.45;
+      } else {
+        // Cheering with arms held high
+        player.parts.leftArm.rotation.x = -2.65;
+        player.parts.rightArm.rotation.x = -2.65;
+        player.parts.leftLeg.rotation.x = Math.sin(player.runCycle) * 0.45;
+        player.parts.rightLeg.rotation.x = -Math.sin(player.runCycle) * 0.45;
+        player.parts.torso.position.y = player.baseTorsoY + Math.abs(Math.sin(player.runCycle)) * 0.14;
+      }
+      return;
+    }
+
+    // Teammates cheering together
+    if (player.isTeammateCelebrating) {
+      player.runCycle += dt * 10;
+      player.parts.leftArm.rotation.x = -2.2 + Math.sin(player.runCycle * 2) * 0.3;
+      player.parts.rightArm.rotation.x = -2.2 + Math.cos(player.runCycle * 2) * 0.3;
+      player.parts.leftLeg.rotation.x = Math.sin(player.runCycle) * 0.4;
+      player.parts.rightLeg.rotation.x = -Math.sin(player.runCycle) * 0.4;
+      return;
+    }
+
+    // Conceding team disappointment pose
+    if (player.isConcedingDisappointed) {
+      player.parts.torso.rotation.x = 0.45;
+      player.parts.leftArm.rotation.x = -1.8;
+      player.parts.leftArm.rotation.z = 0.3;
+      player.parts.rightArm.rotation.x = -1.8;
+      player.parts.rightArm.rotation.z = -0.3;
+      player.parts.leftLeg.rotation.x = 0;
+      player.parts.rightLeg.rotation.x = 0;
       return;
     }
 
@@ -3738,6 +4279,87 @@ class FootballGame {
     }
   }
 
+  // --- CINEMATIC BOZAN GAMES SPLASH SCREEN & PARTICLES ---
+  initSplashEffects() {
+    const canvas = document.getElementById('splash-particles-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    const resize = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    };
+    resize();
+    window.addEventListener('resize', resize);
+
+    const particles = [];
+    for (let i = 0; i < 45; i++) {
+      particles.push({
+        x: Math.random() * window.innerWidth,
+        y: Math.random() * window.innerHeight,
+        r: Math.random() * 2.2 + 1.2,
+        vx: (Math.random() - 0.5) * 0.4,
+        vy: -Math.random() * 0.7 - 0.3,
+        color: Math.random() < 0.65 ? 'rgba(16, 185, 129, ' : 'rgba(245, 158, 11, ',
+        alpha: Math.random() * 0.7 + 0.2,
+        pulseSpeed: Math.random() * 0.03 + 0.01
+      });
+    }
+
+    const animateSplash = () => {
+      if (this.screenState === 'splash') {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        particles.forEach(p => {
+          p.x += p.vx;
+          p.y += p.vy;
+          p.alpha += Math.sin(Date.now() * p.pulseSpeed) * 0.01;
+          if (p.y < -10) {
+            p.y = canvas.height + 10;
+            p.x = Math.random() * canvas.width;
+          }
+          if (p.x < 0) p.x = canvas.width;
+          if (p.x > canvas.width) p.x = 0;
+
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+          ctx.fillStyle = p.color + Math.max(0.05, Math.min(0.9, p.alpha)) + ')';
+          ctx.shadowBlur = 10;
+          ctx.shadowColor = p.color + '0.8)';
+          ctx.fill();
+        });
+        ctx.shadowBlur = 0;
+      }
+      requestAnimationFrame(animateSplash);
+    };
+    animateSplash();
+  }
+
+  replayIntro() {
+    this.screenState = 'splash';
+    const splashScreen = document.getElementById('splash-screen');
+    const mainMenu = document.getElementById('main-menu');
+    const hudOverlay = document.getElementById('hud-overlay');
+
+    if (mainMenu) mainMenu.classList.remove('active');
+    if (hudOverlay) hudOverlay.style.display = 'none';
+    if (splashScreen) {
+      splashScreen.classList.add('active');
+      const letters = splashScreen.querySelectorAll('.letter-glow');
+      letters.forEach(l => {
+        l.style.animation = 'none';
+        void l.offsetWidth; // trigger reflow
+        l.style.animation = '';
+      });
+      const laser = splashScreen.querySelector('.title-laser-sweep');
+      if (laser) {
+        laser.style.animation = 'none';
+        void laser.offsetWidth;
+        laser.style.animation = '';
+      }
+    }
+    this.audio.playIntroBoom();
+  }
+
   // --- UI & Modals Management ---
   initUI() {
     // --- SPLASH SCREEN LOGIC ---
@@ -3748,6 +4370,7 @@ class FootballGame {
     const enterMainMenu = () => {
       if (this.screenState !== 'splash') return;
       this.audio.init();
+      this.audio.playIntroBoom();
       this.audio.startMusic(0);
       this.audio.playWhistle('short');
       this.screenState = 'menu';
@@ -3762,6 +4385,12 @@ class FootballGame {
       } else if (this.screenState === 'match' && e.code === 'Escape') {
         this.togglePauseMenu();
       }
+    });
+
+    // Replay Bozan Games Intro Button
+    const btnReplayIntro = document.getElementById('menu-btn-replay-intro');
+    btnReplayIntro?.addEventListener('click', () => {
+      this.replayIntro();
     });
 
     // --- MAIN MENU TOOLBAR BUTTONS ---
@@ -4359,7 +4988,7 @@ class FootballGame {
     });
   }
 
-  // --- SUBSTITUTIONS MODAL ---
+  // --- SUBSTITUTIONS & SQUAD MANAGEMENT ---
   populateSubsModal() {
     const startersList = document.getElementById('active-starters-list');
     const benchList = document.getElementById('bench-substitutes-list');
@@ -4372,21 +5001,30 @@ class FootballGame {
     this.selectedIncoming = null;
 
     this.homePlayers.forEach(p => {
+      const isRed = p.isSentOff;
       const item = document.createElement('div');
-      item.className = 'roster-item';
+      item.className = 'roster-item' + (isRed ? ' sent-off' : '');
+      const cardBadge = isRed
+        ? '<span style="color:#ef4444; font-weight:800; margin-left:6px; font-size:11px;">[KIRMIZI KART]</span>'
+        : (p.yellowCards ? '<span style="color:#eab308; font-weight:800; margin-left:6px; font-size:11px;">[SARI KART]</span>' : '');
+
       item.innerHTML = `
         <div class="roster-item-info">
           <span style="font-weight:700; color:var(--color-primary-light);">#${p.data.num}</span>
           <span>${p.data.name} (${p.data.pos})</span>
+          ${cardBadge}
         </div>
-        <div class="roster-item-stamina">${Math.round(p.stamina)}% COND</div>
+        <div class="roster-item-stamina">${isRed ? 'İHRAÇ EDİLDİ' : Math.round(p.stamina) + '% COND'}</div>
       `;
-      item.addEventListener('click', () => {
-        document.querySelectorAll('#active-starters-list .roster-item').forEach(i => i.classList.remove('selected'));
-        item.classList.add('selected');
-        this.selectedOutgoing = p;
-        this.audio.playKick(0.2, 'finesse');
-      });
+
+      if (!isRed) {
+        item.addEventListener('click', () => {
+          document.querySelectorAll('#active-starters-list .roster-item').forEach(i => i.classList.remove('selected'));
+          item.classList.add('selected');
+          this.selectedOutgoing = p;
+          this.audio.playKick(0.2, 'finesse');
+        });
+      }
       startersList.appendChild(item);
     });
 
@@ -4419,14 +5057,76 @@ class FootballGame {
 
     const outP = this.selectedOutgoing;
     const inData = this.selectedIncoming;
+    const oldData = outP.data;
 
-    outP.data = inData;
-    outP.stamina = 100;
-    this.activePlayer = outP;
-    this.updateHUDPlayerCard();
+    if (outP.isSentOff) {
+      alert("Kırmızı kart gören oyuncu değiştirilemez!");
+      return;
+    }
 
-    this.audio.playKick(0.5, 'power');
+    // 1. Swap bench array data
+    if (this.currentHomeTeam && this.currentHomeTeam.bench) {
+      const inIdx = this.currentHomeTeam.bench.findIndex(b => b.name === inData.name && b.num === inData.num);
+      if (inIdx !== -1) {
+        this.currentHomeTeam.bench[inIdx] = oldData;
+      }
+    }
+
+    // 2. Rebuild the 3D player mesh on pitch
+    const newP = this.createHumanoidPlayer(inData, true);
+    newP.mesh.position.copy(outP.mesh.position);
+    newP.mesh.rotation.copy(outP.mesh.rotation);
+    newP.vel.copy(outP.vel);
+    newP.stamina = 100.0;
+    newP.yellowCards = 0;
+
+    // Remove old mesh from Three.js scene & add new mesh
+    this.scene.remove(outP.mesh);
+    this.scene.add(newP.mesh);
+
+    // Replace in this.homePlayers array
+    const pIdx = this.homePlayers.indexOf(outP);
+    if (pIdx !== -1) {
+      this.homePlayers[pIdx] = newP;
+    }
+
+    // Update active player if substituted
+    if (this.activePlayer === outP) {
+      this.activePlayer = newP;
+      if (newP.parts.selectionRing) newP.parts.selectionRing.material.opacity = 0.85;
+      this.updateHUDPlayerCard();
+    }
+
+    // 3. Show 4th Official Electronic Substitution Board (Tabela)
+    this.showSubBoard(inData, oldData);
+
+    // 4. Audio Chime & Close Modal
+    this.audio.playSubChime();
     this.toggleModal('modal-subs');
+    this.selectedOutgoing = null;
+    this.selectedIncoming = null;
+  }
+
+  showSubBoard(inData, outData) {
+    const overlay = document.getElementById('sub-board-overlay');
+    const inNum = document.getElementById('sub-in-number');
+    const inName = document.getElementById('sub-in-name');
+    const outNum = document.getElementById('sub-out-number');
+    const outName = document.getElementById('sub-out-name');
+    const teamName = document.getElementById('sub-board-team-name');
+
+    if (!overlay) return;
+    if (inNum) inNum.textContent = inData.num;
+    if (inName) inName.textContent = inData.name.toUpperCase();
+    if (outNum) outNum.textContent = outData.num;
+    if (outName) outName.textContent = outData.name.toUpperCase();
+    if (teamName && this.currentHomeTeam) teamName.textContent = this.currentHomeTeam.shortName || 'BOZAN FC';
+
+    overlay.classList.add('show');
+    if (this.subBoardTimeout) clearTimeout(this.subBoardTimeout);
+    this.subBoardTimeout = setTimeout(() => {
+      overlay.classList.remove('show');
+    }, 4500);
   }
 
   updateHUDPlayerCard() {
@@ -4489,5 +5189,18 @@ window.addEventListener('DOMContentLoaded', () => {
     window.game.toggleModal('modal-team-select');
   } else if (screen === 'match') {
     window.game.startMatch('real_madrid', 'al_nassr');
+  } else if (screen === 'subs') {
+    window.game.startMatch('real_madrid', 'al_nassr');
+    window.game.populateSubsModal();
+    window.game.toggleModal('modal-subs');
+  } else if (screen === 'sub_board') {
+    window.game.startMatch('real_madrid', 'al_nassr');
+    window.game.showSubBoard(window.game.currentHomeTeam.bench[0], window.game.homePlayers[9].data);
+  } else if (screen === 'foul') {
+    window.game.startMatch('real_madrid', 'al_nassr');
+    window.game.triggerFoul(window.game.homePlayers[9], window.game.awayPlayers[9], true);
+  } else if (screen === 'goal') {
+    window.game.startMatch('real_madrid', 'al_nassr');
+    window.game.matchManager.triggerGoal(true);
   }
 });

@@ -15,12 +15,17 @@
   <div id="canvas-container"></div>
 
   <!-- =========================================================================
-       SCREEN 1: "BOZAN GAMES" STUDIO SPLASH SCREEN
+       SCREEN 1: "BOZAN GAMES" STUDIO SPLASH SCREEN (CINEMATIC INTRO)
        ========================================================================= -->
   <div id="splash-screen" class="screen-layer active">
+    <canvas id="splash-particles-canvas" class="splash-particles-bg"></canvas>
     <div class="splash-ambient-glow"></div>
+    <div class="splash-spotlight-beam beam-left"></div>
+    <div class="splash-spotlight-beam beam-right"></div>
+
     <div class="splash-content">
       <div class="studio-badge-wrap">
+        <div class="studio-crest-glow-ring"></div>
         <div class="studio-crest">
           <svg viewBox="0 0 64 64" fill="none" class="crest-svg">
             <polygon points="32 4 58 18 58 46 32 60 6 46 6 18" stroke="#10b981" stroke-width="2.5" fill="rgba(6, 78, 59, 0.4)"/>
@@ -33,7 +38,14 @@
         <span class="edition-tag">NEXT-GEN SIMULATION</span>
       </div>
 
-      <h1 class="splash-title">BOZAN GAMES</h1>
+      <div class="bozan-brand-title-wrap">
+        <h1 class="splash-title" id="bozan-animated-title">
+          <span class="bozan-word"><span class="letter-glow" style="--i:0">B</span><span class="letter-glow" style="--i:1">O</span><span class="letter-glow" style="--i:2">Z</span><span class="letter-glow" style="--i:3">A</span><span class="letter-glow" style="--i:4">N</span></span>
+          <span class="bozan-word gold-word"><span class="letter-glow gold" style="--i:5">G</span><span class="letter-glow gold" style="--i:6">A</span><span class="letter-glow gold" style="--i:7">M</span><span class="letter-glow gold" style="--i:8">E</span><span class="letter-glow gold" style="--i:9">S</span></span>
+        </h1>
+        <div class="title-laser-sweep"></div>
+      </div>
+
       <p class="splash-subtitle">PROFESSIONAL 11v11 FOOTBALL ENGINE &bull; 2026 EDITION</p>
 
       <div class="splash-action-box">
@@ -103,6 +115,11 @@
 
         <!-- Quick Menu Actions -->
         <div class="menu-quick-tools">
+          <button id="menu-btn-replay-intro" class="tool-icon-btn" title="Bozan Games İntro Animasyonunu Oynat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2">
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+          </button>
           <button id="menu-btn-audio" class="tool-icon-btn" title="Ses Aç/Kapat">
             <svg id="menu-audio-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
@@ -824,6 +841,61 @@
         <div class="goal-title">GOAL!</div>
       </div>
       <div class="goal-subtitle" id="goal-scorer-info">Müthiş bir vuruşla ağları sarstı!</div>
+    </div>
+
+    <!-- Referee Foul & Yellow/Red Card Broadcast Banner -->
+    <div id="foul-card-banner" class="foul-card-banner">
+      <div class="foul-banner-header">
+        <div class="foul-badge-icon" id="foul-card-icon-frame">
+          <div class="referee-card-symbol yellow" id="foul-card-symbol"></div>
+        </div>
+        <div class="foul-text-group">
+          <div class="foul-title" id="foul-banner-title">SARI KART</div>
+          <div class="foul-meta">
+            <span class="foul-player-name" id="foul-player-name">KYLIAN MBAPPÉ</span>
+            <span class="foul-player-num" id="foul-player-num">#9</span>
+            <span class="foul-reason" id="foul-reason-text">Sert Müdahale</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4th Official Electronic Substitution Board (Tabela) -->
+    <div id="sub-board-overlay" class="sub-board-overlay">
+      <div class="sub-board-casing">
+        <div class="sub-board-header">
+          <div class="sub-board-header-tag">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="17 1 21 5 17 9"></polyline>
+              <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
+              <polyline points="7 23 3 19 7 15"></polyline>
+              <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
+            </svg>
+            <span>4. HAKEM &bull; OYUNCU DEĞİŞİKLİĞİ</span>
+          </div>
+          <span class="sub-board-team" id="sub-board-team-name">REAL MADRID</span>
+        </div>
+
+        <div class="sub-board-panels">
+          <!-- IN (Green Panel) -->
+          <div class="sub-panel panel-in">
+            <div class="sub-panel-type">GİREN (IN)</div>
+            <div class="sub-digit-box in-glow">
+              <span class="sub-digit" id="sub-in-number">10</span>
+            </div>
+            <div class="sub-player-label" id="sub-in-name">L. MODRIC</div>
+          </div>
+
+          <!-- OUT (Red Panel) -->
+          <div class="sub-panel panel-out">
+            <div class="sub-panel-type">ÇIKAN (OUT)</div>
+            <div class="sub-digit-box out-glow">
+              <span class="sub-digit" id="sub-out-number">8</span>
+            </div>
+            <div class="sub-player-label" id="sub-out-name">F. VALVERDE</div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Shot Speed Indicator Flash -->

@@ -910,6 +910,74 @@ class FIFAAudioEngine {
       osc.stop(now + 0.07);
     } catch (e) {}
   }
+
+  // Cinematic Studio Intro Boom with Deep Sub-bass & Crystal Shimmer
+  playIntroBoom() {
+    this.init();
+    if (!this.sfxGain || !this.ctx) return;
+    try {
+      const now = this.ctx.currentTime;
+      // Sub bass impact
+      const subOsc = this.ctx.createOscillator();
+      const subGain = this.ctx.createGain();
+      subOsc.type = 'sine';
+      subOsc.frequency.setValueAtTime(140, now);
+      subOsc.frequency.exponentialRampToValueAtTime(32, now + 0.8);
+      subGain.gain.setValueAtTime(0.8, now);
+      subGain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+      subOsc.connect(subGain);
+      subGain.connect(this.sfxGain);
+      subOsc.start(now);
+      subOsc.stop(now + 1.2);
+
+      // Shimmer sweep
+      const shimmer = this.ctx.createOscillator();
+      const sGain = this.ctx.createGain();
+      shimmer.type = 'triangle';
+      shimmer.frequency.setValueAtTime(440, now);
+      shimmer.frequency.exponentialRampToValueAtTime(1760, now + 0.6);
+      sGain.gain.setValueAtTime(0.2, now);
+      sGain.gain.exponentialRampToValueAtTime(0.001, now + 0.7);
+      shimmer.connect(sGain);
+      sGain.connect(this.sfxGain);
+      shimmer.start(now);
+      shimmer.stop(now + 0.7);
+    } catch (e) {}
+  }
+
+  // 4th Official Electronic Substitution Board Chime & Crowd Applause
+  playSubChime() {
+    this.init();
+    if (!this.sfxGain || !this.ctx) return;
+    try {
+      const now = this.ctx.currentTime;
+      // Dual stadium chime: C6 -> G6
+      [1046.5, 1567.98].forEach((freq, i) => {
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, now + i * 0.12);
+        gain.gain.setValueAtTime(0.3, now + i * 0.12);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.12 + 0.4);
+        osc.connect(gain);
+        gain.connect(this.sfxGain);
+        osc.start(now + i * 0.12);
+        osc.stop(now + i * 0.12 + 0.4);
+      });
+      // Short whistle
+      this.playWhistle('short');
+    } catch (e) {}
+  }
+
+  // Referee Booking Card Whistle (Sharp double blast + crowd reaction)
+  playCardWhistle(isRed = false) {
+    this.init();
+    this.playWhistle('short');
+    setTimeout(() => {
+      this.playWhistle(isRed ? 'long' : 'short');
+    }, 180);
+    this.playCrowdGasp();
+  }
 }
 
 // Attach globally
