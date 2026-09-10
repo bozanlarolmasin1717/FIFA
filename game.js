@@ -926,23 +926,22 @@ class PlayerLocomotionEngine {
     const pace = player.data.pace || 80;
     const dri = player.data.dri || 80;
     const hasBall = !!player.hasPossession;
+    const diff = this.game && typeof this.game.getDifficultyConfig === 'function' 
+      ? this.game.getDifficultyConfig() 
+      : (typeof DIFFICULTY_CONFIG !== 'undefined' ? DIFFICULTY_CONFIG.normal : { playerDribblePenalty: 0.18, aiDribblePenalty: 0.18 });
+    const isPlayerControlled = player === this.game?.activePlayer;
+    const dribblePenalty = isPlayerControlled ? diff.playerDribblePenalty : diff.aiDribblePenalty;
 
     if (hasBall) {
-      // Toplu Koşu: Dribling sırasında ayak temasları ve top kontrolü nedeniyle hız ~18-20% daha düşüktür
-      if (isSprinting) {
-        // Sprint with ball: ~11.6 m/s base scaled by pace & dribbling stats
-        return 11.6 * ((pace * 0.6 + dri * 0.4) / 80.0);
-      } else {
-        // Jog with ball: ~7.2 m/s base
-        return 7.2 * ((pace * 0.5 + dri * 0.5) / 80.0);
-      }
+      // Toplu Koşu: Dribling sırasında ayak temasları ve zorluk seviyesi cezası
+      const baseTopSpeed = isSprinting ? 14.2 : 8.5;
+      const statFactor = (pace * 0.55 + dri * 0.45) / 80.0;
+      return baseTopSpeed * statFactor * (1.0 - dribblePenalty);
     } else {
-      // Topsuz Koşu: Serbest koşu ve topsuz depar çok daha çevik ve hızlıdır
+      // Topsuz Koşu: Serbest koşu ve topsuz depar
       if (isSprinting) {
-        // Sprint without ball: ~14.8 m/s base scaled by pace
         return 14.8 * (pace / 80.0);
       } else {
-        // Jog without ball: ~8.8 m/s base
         return 8.8 * (pace / 80.0);
       }
     }
@@ -958,15 +957,19 @@ class PlayerLocomotionEngine {
       player.vel = new THREE.Vector3();
     }
 
-    // 1. Sprint & Stamina Mechanics
+    // 1. Sprint & Stamina Mechanics (Scaled by PHY attribute)
+    const phy = player.data.phy || 75;
+    const staminaDrainRate = Math.max(7.0, 18.0 - (phy / 100) * 9.0);
+    const staminaRecoverRate = 4.0 + (phy / 100) * 3.5;
+
     const canSprint = isShiftDown && player.stamina > 5.0;
     const isSprinting = canSprint && inputDir.lengthSq() > 0.01;
 
     if (isSprinting) {
-      player.stamina = Math.max(0, player.stamina - dt * 14.0);
+      player.stamina = Math.max(0, player.stamina - dt * staminaDrainRate);
     } else {
       // Stamina recovers when jogging, walking, or standing
-      player.stamina = Math.min(100.0, player.stamina + dt * 5.0);
+      player.stamina = Math.min(100.0, player.stamina + dt * staminaRecoverRate);
     }
 
     // Update HUD stamina if active player
@@ -1101,11 +1104,57 @@ if (typeof window !== 'undefined') {
   window.BallPhysicsEngine = BallPhysicsEngine;
 }
 
+// --- Difficulty Settings Configuration ---
+const DIFFICULTY_CONFIG = {
+  easy: {
+    name: 'Kolay',
+    aiShotAccuracy: 0.40,
+    aiPassSuccess: 0.55,
+    aiPressSpeedMultiplier: 0.75,
+    aiShotFrequencyInBox: 0.35,
+    aiPassFrequency: 0.40,
+    aiTackleSuccess: 0.40,
+    aiGkReflexMultiplier: 0.80,
+    playerDribblePenalty: 0.10,
+    aiDribblePenalty: 0.22,
+    aiFoulChance: 0.15
+  },
+  normal: {
+    name: 'Normal',
+    aiShotAccuracy: 0.60,
+    aiPassSuccess: 0.70,
+    aiPressSpeedMultiplier: 1.00,
+    aiShotFrequencyInBox: 0.55,
+    aiPassFrequency: 0.60,
+    aiTackleSuccess: 0.60,
+    aiGkReflexMultiplier: 1.00,
+    playerDribblePenalty: 0.18,
+    aiDribblePenalty: 0.18,
+    aiFoulChance: 0.25
+  },
+  hard: {
+    name: 'Zor',
+    aiShotAccuracy: 0.80,
+    aiPassSuccess: 0.85,
+    aiPressSpeedMultiplier: 1.25,
+    aiShotFrequencyInBox: 0.75,
+    aiPassFrequency: 0.75,
+    aiTackleSuccess: 0.80,
+    aiGkReflexMultiplier: 1.20,
+    playerDribblePenalty: 0.18,
+    aiDribblePenalty: 0.14,
+    aiFoulChance: 0.35
+  }
+};
+
 // --- Main Game Engine ---
 class FootballGame {
   constructor() {
     this.container = document.getElementById('canvas-container');
     this.audio = new FootballAudio();
+
+    // Difficulty Setting ('easy', 'normal', 'hard')
+    this.difficulty = 'normal';
 
     // Scene & Renderer
     this.scene = new THREE.Scene();
@@ -1245,6 +1294,29 @@ class FootballGame {
     this.initUI();
     this.initSplashEffects();
     this.animate();
+  }
+
+  getDifficultyConfig() {
+    return (typeof DIFFICULTY_CONFIG !== 'undefined' && DIFFICULTY_CONFIG[this.difficulty])
+      ? DIFFICULTY_CONFIG[this.difficulty]
+      : {
+          aiShotAccuracy: 0.60,
+          aiPassSuccess: 0.70,
+          aiPressSpeedMultiplier: 1.0,
+          aiShotFrequencyInBox: 0.55,
+          aiPassFrequency: 0.60,
+          aiTackleSuccess: 0.60,
+          aiGkReflexMultiplier: 1.0,
+          playerDribblePenalty: 0.18,
+          aiDribblePenalty: 0.18,
+          aiFoulChance: 0.25
+        };
+  }
+
+  setDifficulty(level) {
+    if (typeof DIFFICULTY_CONFIG !== 'undefined' && DIFFICULTY_CONFIG[level]) {
+      this.difficulty = level;
+    }
   }
 
   // --- Gameplay Event Hooks (Extensible for rules, stats, commentary, referee) ---
@@ -2813,6 +2885,11 @@ class FootballGame {
         this.performSlideTackle();
       }
 
+      // Skill Move / Çalım (F key)
+      if (e.code === 'KeyF') {
+        this.performSkillMove();
+      }
+
       // Through ball (Q key)
       if (e.code === 'KeyQ' && !this.isChargingPower) {
         this.startCharging('through');
@@ -3052,7 +3129,7 @@ class FootballGame {
         if (this.keys['KeyS'] || this.keys['ArrowDown']) leadDir.z += 0.6;
         leadDir.normalize();
 
-        const runner = this.findBestTeammatePass(leadDir);
+        const runner = this.findBestTeammatePass(leadDir, true);
         if (runner) {
           const leadDist = 7.0 + (pasStat / 100) * 3.0;
           const leadSpot = runner.mesh.position.clone().add(new THREE.Vector3(leadDist, 0, 0));
@@ -3077,17 +3154,38 @@ class FootballGame {
         break;
 
       case 'aerial':
-        // High arching cross / lob into penalty box
-        aim.set(40.0 - playerPos.x, 0, (Math.random() - 0.5) * 14 - playerPos.z).normalize();
-        forceMag = 24 + charge * 18;
-        elevation = 6.5 + charge * 6.5;
-        spinY = (Math.random() - 0.5) * 12;
+        // High arching cross / lob pass to targeted teammate
+        let lobDir = new THREE.Vector3();
+        if (this.keys['KeyW'] || this.keys['ArrowUp']) lobDir.z -= 1;
+        if (this.keys['KeyS'] || this.keys['ArrowDown']) lobDir.z += 1;
+        if (this.keys['KeyA'] || this.keys['ArrowLeft']) lobDir.x -= 1;
+        if (this.keys['KeyD'] || this.keys['ArrowRight']) lobDir.x += 1;
+        if (lobDir.lengthSq() < 0.1) lobDir.set(1, 0, 0);
+        lobDir.normalize();
+
+        const lobTarget = this.findBestTeammatePass(lobDir, false);
+        if (lobTarget) {
+          const toTarget = new THREE.Vector3().subVectors(lobTarget.mesh.position, playerPos);
+          const dist = toTarget.length();
+          aim.copy(toTarget).normalize();
+          forceMag = Math.min(36, Math.max(20, dist * 1.1 + (pasStat / 100) * 5 + charge * 8));
+          elevation = 5.5 + Math.min(6.5, dist * 0.22 + charge * 3.5);
+          this.passReceiver = lobTarget;
+          kickTarget = lobTarget.mesh.position.clone();
+        } else {
+          aim.copy(lobDir);
+          forceMag = 22 + charge * 14;
+          elevation = 6.0 + charge * 5.0;
+          kickTarget = playerPos.clone().addScaledVector(aim, forceMag * 0.9);
+        }
+        spinY = (Math.random() - 0.5) * 8;
         kickSoundType = 'normal';
-        kickTarget = playerPos.clone().addScaledVector(aim, forceMag * 0.9);
         this.matchStats.homePasses++;
 
         // Dispatch OnBallPassed event
         this.events.emit('OnBallPassed', this.activePlayer, charge, kickTarget);
+        this.onBallPassed(this.activePlayer, charge, kickTarget);
+        break;
         this.onBallPassed(this.activePlayer, charge, kickTarget);
         break;
     }
@@ -3111,29 +3209,126 @@ class FootballGame {
     this.powerCharge = 0.0;
   }
 
+  // --- Skill Move / Çalım (F Key) ---
+  performSkillMove() {
+    if (!this.activePlayer || !this.activePlayer.hasPossession || this.activePlayer.stumbleTimer > 0 || this.activePlayer.isTackling) return;
+    const player = this.activePlayer;
+    const driStat = player.data.dri || 80;
+    const paceStat = player.data.pace || 80;
+
+    // Cooldown check
+    if (player.skillCooldown > 0) return;
+    player.skillCooldown = 0.8;
+    player.skillTimer = 0.4;
+
+    const rotY = player.mesh.rotation.y;
+    const fwd = new THREE.Vector3(Math.sin(rotY), 0, Math.cos(rotY));
+    const side = new THREE.Vector3(Math.cos(rotY), 0, -Math.sin(rotY));
+
+    // Skill evasion direction (step-over cut)
+    const cutDir = Math.random() > 0.5 ? 1 : -1;
+    const burstDir = fwd.clone().addScaledVector(side, cutDir * 0.45).normalize();
+
+    // Speed burst based on pace & dribble
+    const burstSpeed = 9.0 + (paceStat / 100) * 4.5;
+    if (player.vel) {
+      player.vel.copy(burstDir).multiplyScalar(burstSpeed);
+    }
+
+    // Ball quick touch forward-side
+    const ballOffset = burstDir.clone().multiplyScalar(1.25);
+    this.ball.position.copy(player.mesh.position).add(ballOffset);
+    this.ball.position.y = this.ballRadius;
+    this.ballVel.copy(burstDir).multiplyScalar(burstSpeed * 0.6);
+
+    // Audio cue & body tilt
+    this.audio.playKick(0.5, 'finesse');
+    if (player.parts && player.parts.torso) {
+      player.parts.torso.rotation.z = -cutDir * 0.35;
+    }
+
+    // Evaluate against closest defender within 3.2m
+    let closestDefender = null;
+    let minDist = 3.2;
+    this.awayPlayers.forEach(op => {
+      if (op.isSentOff || op.data.pos === 'GK') return;
+      const d = player.mesh.position.distanceTo(op.mesh.position);
+      if (d < minDist) {
+        minDist = d;
+        closestDefender = op;
+      }
+    });
+
+    if (closestDefender) {
+      const oppDef = closestDefender.data.def || 75;
+      const oppPace = closestDefender.data.pace || 75;
+      // Dribble success calculation
+      const successChance = Math.min(0.85, Math.max(0.30, ((driStat * 0.65 + paceStat * 0.35) - (oppDef * 0.5 + oppPace * 0.2)) / 50 + 0.5));
+      
+      if (Math.random() < successChance) {
+        // Defender is beaten! Caught wrong-footed
+        closestDefender.stumbleTimer = 0.65;
+        closestDefender.vel.multiplyScalar(0.1);
+        if (closestDefender.parts && closestDefender.parts.torso) {
+          closestDefender.parts.torso.rotation.z = cutDir * 0.4;
+        }
+        this.flashShotSpeed("⚡ ÇALIM!");
+      } else {
+        // Defender reads the move and pokes ball away
+        player.hasPossession = false;
+        player.stumbleTimer = 0.35;
+        this.ballVel.copy(side).multiplyScalar(-cutDir * 8.0);
+        this.kickCooldown = 0.4;
+        this.audio.playTackle();
+      }
+    } else {
+      this.flashShotSpeed("⚡ HIZLI ÇALIM");
+    }
+  }
+
   performStandingTackle() {
-    if (!this.activePlayer) return;
+    if (!this.activePlayer || this.activePlayer.isTackling) return;
     this.activePlayer.kickTimer = 0.3; // extend leg forward
     const pPos = this.activePlayer.mesh.position;
     const distToBall = pPos.distanceTo(this.ball.position);
+    const defStat = this.activePlayer.data.def || 75;
+    const phyStat = this.activePlayer.data.phy || 75;
 
-    if (distToBall < 2.2) {
-      this.activePlayer.hasPossession = true;
-      this.awayPlayers.forEach(op => {
-        if (op.hasPossession) {
-          op.hasPossession = false;
-          op.stumbleTimer = 0.45;
+    if (distToBall < 2.3) {
+      const diff = this.getDifficultyConfig();
+      // Find carrier
+      const oppCarrier = this.awayPlayers.find(op => op.hasPossession);
+      const oppDri = oppCarrier ? (oppCarrier.data.dri || 75) : 75;
+      const successProb = Math.min(0.88, Math.max(0.35, ((defStat * 1.1 + phyStat * 0.4) - oppDri * 0.6) / 100 + 0.2));
+
+      if (Math.random() < successProb) {
+        this.activePlayer.hasPossession = true;
+        this.awayPlayers.forEach(op => {
+          if (op.hasPossession) {
+            op.hasPossession = false;
+            op.stumbleTimer = 0.45;
+          }
+        });
+        this.kickCooldown = 0.35;
+        this.matchStats.homeTackles++;
+        this.audio.playTackle();
+      } else {
+        // Tackle missed or foul chance
+        if (Math.random() < diff.aiFoulChance * 0.4 && oppCarrier) {
+          this.triggerFoul(this.activePlayer, oppCarrier, false);
+        } else {
+          // Ball loose
+          this.ballVel.add(new THREE.Vector3((Math.random() - 0.5) * 8, 0.5, (Math.random() - 0.5) * 8));
+          this.kickCooldown = 0.3;
         }
-      });
-      this.kickCooldown = 0.35;
-      this.audio.playTackle();
+      }
     }
   }
 
   performSlideTackle() {
     if (!this.activePlayer || this.activePlayer.isTackling || this.activePlayer.isSentOff) return;
     this.activePlayer.isTackling = true;
-    this.activePlayer.tackleTimer = 0.65;
+    this.activePlayer.tackleTimer = 0.75;
     this.activePlayer.stamina = Math.max(0, this.activePlayer.stamina - 15);
 
     const forward = new THREE.Vector3(
@@ -3155,12 +3350,15 @@ class FootballGame {
     });
 
     if (hitOpponent && this.foulCooldown <= 0) {
-      // Check if tackle was from behind
+      // Check if tackle was from behind or missed ball
       const opDir = new THREE.Vector3(Math.sin(hitOpponent.mesh.rotation.y), 0, Math.cos(hitOpponent.mesh.rotation.y));
       const dot = forward.dot(opDir);
-      const isMissedBall = distToBall > 2.0;
+      const isMissedBall = distToBall > 1.8;
+      const defStat = this.activePlayer.data.def || 75;
 
-      if (dot > 0.05 || isMissedBall) {
+      // Higher DEF stat reduces foul rate on borderline tackles
+      const foulProb = (dot > 0.05 || isMissedBall) ? Math.max(0.35, 0.95 - (defStat / 100) * 0.3) : 0;
+      if (Math.random() < foulProb) {
         // FOUL!
         this.triggerFoul(this.activePlayer, hitOpponent, true);
         return;
@@ -3172,6 +3370,7 @@ class FootballGame {
       this.ballVel.copy(tackleDir).multiplyScalar(22);
       this.activePlayer.hasPossession = false;
       this.kickCooldown = 0.45;
+      this.matchStats.homeTackles++;
       this.awayPlayers.forEach(op => {
         if (op.hasPossession) {
           op.hasPossession = false;
@@ -3201,23 +3400,51 @@ class FootballGame {
     }
   }
 
-  findBestTeammatePass(aimDir) {
+  findBestTeammatePass(aimDir, isThrough = false) {
     let best = null;
     let highestScore = -999;
     const pPos = this.activePlayer.mesh.position;
+    const pasStat = this.activePlayer.data.pas || 75;
+
+    // Find the opponent's deepest outfield defender line (offside trap / back line analysis)
+    let deepestOppX = 35; // Default reference
+    this.awayPlayers.forEach(op => {
+      if (op.data.pos !== 'GK' && !op.isSentOff) {
+        if (op.mesh.position.x > deepestOppX) deepestOppX = op.mesh.position.x;
+      }
+    });
 
     this.homePlayers.forEach(p => {
       if (p === this.activePlayer || p.data.pos === 'GK') return;
       const toP = new THREE.Vector3().subVectors(p.mesh.position, pPos);
       const dist = toP.length();
-      if (dist < 3.0 || dist > 45.0) return;
+      if (dist < 3.0 || dist > 48.0) return;
       toP.normalize();
 
       const dot = aimDir.dot(toP);
-      if (dot <= 0.0) return;
+      if (dot <= 0.05) return;
 
       const distScore = 1.0 - Math.abs(dist - 18.0) / 30.0;
-      const score = dot * 0.75 + distScore * 0.25;
+      let score = dot * 0.70 + distScore * 0.30;
+
+      // Unmarked bonus
+      let minOppDist = 999;
+      this.awayPlayers.forEach(op => {
+        const d = op.mesh.position.distanceTo(p.mesh.position);
+        if (d < minOppDist) minOppDist = d;
+      });
+      score += Math.min(1.2, minOppDist * 0.15);
+
+      // Through Ball Intelligence: Runner surging ahead towards/behind defensive line
+      if (isThrough) {
+        const isForwardRunner = p.mesh.position.x > pPos.x + 3.0;
+        const nearDefLine = p.mesh.position.x > deepestOppX - 6.0 && p.mesh.position.x < 46.0;
+        if (isForwardRunner) score += 1.2;
+        if (nearDefLine) score += 1.8;
+      }
+
+      // PAS attribute weighted precision
+      score *= (0.8 + (pasStat / 100) * 0.3);
 
       if (score > highestScore) {
         highestScore = score;
@@ -3289,7 +3516,7 @@ class FootballGame {
         const toOpp = new THREE.Vector3().subVectors(opp.mesh.position, carrierPos);
         const proj = toOpp.dot(toTmDir);
         if (proj > 2.0 && proj < dist - 2.0) {
-          const perpDist = toOpp.clone().subScaledVector(toTmDir, proj).length();
+          const perpDist = toOpp.clone().addScaledVector(toTmDir, -proj).length();
           if (perpDist < 1.75) {
             laneBlocked = true;
             break;
@@ -3376,6 +3603,7 @@ class FootballGame {
     const oppGk = isHome ? this.awayPlayers[0] : this.homePlayers[0];
     const gkZ = oppGk ? oppGk.mesh.position.z : 0;
     const shoStat = carrier.data.sho || 75;
+    const diff = this.getDifficultyConfig();
 
     // Corner targeting away from goalkeeper (posts at +/- 3.66)
     let targetZ = 0;
@@ -3387,9 +3615,19 @@ class FootballGame {
       targetZ = (Math.random() > 0.5 ? 1 : -1) * (2.8 + Math.random() * 0.5);
     }
 
+    // Shot Accuracy Check based on difficulty & shooter rating
+    const isAccurate = Math.random() < (diff.aiShotAccuracy * (shoStat / 80));
+    if (!isAccurate) {
+      // Skewed shot: push outside post or high
+      targetZ += (Math.random() - 0.5) * 3.8;
+    }
+
     // Top-corner or bottom-corner elevation
     const isTopCorner = Math.random() < 0.4;
-    const elevation = isTopCorner ? (1.85 + Math.random() * 0.45) : (0.45 + Math.random() * 0.65);
+    let elevation = isTopCorner ? (1.85 + Math.random() * 0.45) : (0.45 + Math.random() * 0.65);
+    if (!isAccurate && Math.random() < 0.5) {
+      elevation += 1.4; // Blaze over bar
+    }
 
     const shotAim = new THREE.Vector3(goalX, 0, targetZ).sub(carrier.mesh.position).normalize();
     const forceMag = 27 + (shoStat / 100) * 11 + Math.random() * 4;
@@ -3412,10 +3650,10 @@ class FootballGame {
 
     if (isHome) {
       this.matchStats.homeShots++;
-      if (Math.abs(targetZ) <= 3.66) this.matchStats.homeShotsOnTarget++;
+      if (Math.abs(targetZ) <= 3.66 && elevation <= 2.44) this.matchStats.homeShotsOnTarget++;
     } else {
       this.matchStats.awayShots++;
-      if (Math.abs(targetZ) <= 3.66) this.matchStats.awayShotsOnTarget++;
+      if (Math.abs(targetZ) <= 3.66 && elevation <= 2.44) this.matchStats.awayShotsOnTarget++;
     }
 
     this.events.emit('OnShotTaken', carrier, forceMag / 40, shotAim.clone());
@@ -3424,6 +3662,16 @@ class FootballGame {
 
   executeAISetPiece(carrier, subType, isHome) {
     if (!carrier) return;
+    if (carrier.setPieceDelay > 0) return;
+
+    // 1.5s setup phase so defenders & attackers take proper shape
+    if (!carrier.setPieceReady) {
+      carrier.setPieceReady = true;
+      carrier.setPieceDelay = 1.6;
+      return;
+    }
+    carrier.setPieceReady = false;
+
     const squad = isHome ? this.homePlayers : this.awayPlayers;
 
     if (subType === 'corner') {
@@ -3491,10 +3739,22 @@ class FootballGame {
   }
 
   // --- Main Simulation Loop ---
-  animate() {
-    requestAnimationFrame(() => this.animate());
+  animate(timestamp) {
+    requestAnimationFrame((t) => this.animate(t));
 
-    const dt = 0.016;
+    if (!this.lastFrameTime) {
+      this.lastFrameTime = timestamp || performance.now();
+    }
+    const currentTime = timestamp || performance.now();
+    let dt = (currentTime - this.lastFrameTime) / 1000;
+    this.lastFrameTime = currentTime;
+
+    // Guard against invalid dt (first frame, background tab, frame spikes)
+    if (isNaN(dt) || dt <= 0) {
+      dt = 0.016;
+    } else if (dt > 0.1) {
+      dt = 0.1; // Max clamp at 100ms to avoid physics explosions
+    }
 
     if (!this.isPaused) {
       if (this.matchManager) {
@@ -3674,54 +3934,63 @@ class FootballGame {
   }
 
   updateBallPhysics(dt) {
-    // 1-6. Modular Aerodynamics, Magnus Lift/Curve, Restitution Bounces & Ground Turf Friction
-    this.ballPhysicsEngine.update(this.ball, this.ballVel, this.ballSpin, dt);
+    // Sub-stepping for ball physics & goal post collisions to prevent high-velocity tunneling
+    const maxSubStep = 0.004; // 250Hz sub-step
+    let remainingDt = dt;
+
+    while (remainingDt > 0.0001) {
+      const step = Math.min(remainingDt, maxSubStep);
+
+      // 1-6. Modular Aerodynamics, Magnus Lift/Curve, Restitution Bounces & Ground Turf Friction
+      this.ballPhysicsEngine.update(this.ball, this.ballVel, this.ballSpin, step);
+
+      // 7. Goal Post Collisions (Metallic crossbar & upright pings)
+      if (this.postHitCooldown > 0) {
+        this.postHitCooldown -= step;
+      } else {
+        [-50.0, 50.0].forEach(goalX => {
+          const dx = Math.abs(this.ball.position.x - goalX);
+          // Collision tolerance adapted to sub-stepping + ball radius
+          if (dx < (this.ballRadius + 0.15)) {
+            const absZ = Math.abs(this.ball.position.z);
+            const py = this.ball.position.y;
+
+            // Uprights (Left & Right posts at Z = +/- 3.66, Y <= 2.44)
+            if (Math.abs(absZ - 3.66) < (this.ballRadius + 0.12) && py <= 2.5) {
+              this.ballVel.x = -Math.sign(this.ballVel.x || (goalX > 0 ? 1 : -1)) * Math.max(12, Math.abs(this.ballVel.x) * 0.75);
+              this.ballVel.z += (Math.random() - 0.5) * 8.0;
+              this.ballVel.y = Math.max(2.0, this.ballVel.y * 0.5);
+              this.audio.playCrossbar();
+              this.cameraShake = 0.38;
+              this.postHitCooldown = 0.18;
+            }
+            // Crossbar at Y = 2.44, Z between -3.66 and +3.66
+            else if (Math.abs(py - 2.44) < (this.ballRadius + 0.12) && absZ <= (3.66 + this.ballRadius)) {
+              this.ballVel.y = -Math.abs(this.ballVel.y || 4.0) * 0.65 - 1.5;
+              this.ballVel.x = -Math.sign(this.ballVel.x || (goalX > 0 ? 1 : -1)) * Math.max(10, Math.abs(this.ballVel.x) * 0.65);
+              this.audio.playCrossbar();
+              this.cameraShake = 0.45;
+              this.postHitCooldown = 0.18;
+            }
+          }
+        });
+      }
+
+      // 8. Net Cushioning (Inside the net, ball gently dampens and drops)
+      const inAwayNet = this.ball.position.x > 50.0 && this.ball.position.x < 52.6 && Math.abs(this.ball.position.z) <= (this.goalWidth / 2) && this.ball.position.y <= this.goalHeight;
+      const inHomeNet = this.ball.position.x < -50.0 && this.ball.position.x > -52.6 && Math.abs(this.ball.position.z) <= (this.goalWidth / 2) && this.ball.position.y <= this.goalHeight;
+      if (inAwayNet || inHomeNet) {
+        this.ballVel.multiplyScalar(Math.pow(0.84, step / 0.016));
+        if (this.isGoalSequence && Math.abs(this.ballVel.x) > 4) {
+          this.audio.playNet();
+        }
+      }
+
+      remainingDt -= step;
+    }
 
     // Evaluate pitch trigger zones and dispatch OnBallEnteredTrigger
     this.triggerZones.update(this.ball.position);
-
-    // 7. Goal Post Collisions (Metallic crossbar & upright pings)
-    if (this.postHitCooldown > 0) {
-      this.postHitCooldown -= dt;
-    } else {
-      [-50.0, 50.0].forEach(goalX => {
-        const dx = Math.abs(this.ball.position.x - goalX);
-        if (dx < 0.45) {
-          const absZ = Math.abs(this.ball.position.z);
-          const py = this.ball.position.y;
-
-          // Uprights (Left & Right posts at Z = +/- 3.66, Y <= 2.44)
-          if (Math.abs(absZ - 3.66) < 0.38 && py <= 2.5) {
-            this.ballVel.x = -Math.sign(this.ballVel.x || (goalX > 0 ? 1 : -1)) * Math.max(12, Math.abs(this.ballVel.x) * 0.7);
-            this.ballVel.z += (Math.random() - 0.5) * 8.0;
-            this.ballVel.y = Math.max(2.0, this.ballVel.y * 0.5);
-            this.audio.playCrossbar();
-            this.cameraShake = 0.38;
-            this.postHitCooldown = 0.25;
-          }
-          // Crossbar at Y = 2.44, Z between -3.66 and +3.66
-          else if (Math.abs(py - 2.44) < 0.38 && absZ <= 3.7) {
-            this.ballVel.y = -Math.abs(this.ballVel.y || 4.0) * 0.65 - 1.5;
-            this.ballVel.x = -Math.sign(this.ballVel.x || (goalX > 0 ? 1 : -1)) * Math.max(10, Math.abs(this.ballVel.x) * 0.6);
-            this.audio.playCrossbar();
-            this.cameraShake = 0.45;
-            this.postHitCooldown = 0.25;
-          }
-        }
-      });
-    }
-
-    // 8. Net Cushioning (Inside the net, ball gently dampens and drops)
-    const inAwayNet = this.ball.position.x > 50.0 && this.ball.position.x < 52.6 && Math.abs(this.ball.position.z) <= (this.goalWidth / 2) && this.ball.position.y <= this.goalHeight;
-    const inHomeNet = this.ball.position.x < -50.0 && this.ball.position.x > -52.6 && Math.abs(this.ball.position.z) <= (this.goalWidth / 2) && this.ball.position.y <= this.goalHeight;
-    if (inAwayNet || inHomeNet) {
-      this.ballVel.multiplyScalar(0.84);
-      if (this.isGoalSequence && Math.abs(this.ballVel.x) > 4) {
-        this.audio.playNet();
-      }
-    }
-
-    // 9. Universal Pass Receiver Proactive Movement & First Touch
     if (this.passReceiver) {
       const toBall = new THREE.Vector3().subVectors(this.ball.position, this.passReceiver.mesh.position);
       toBall.y = 0;
@@ -3958,6 +4227,16 @@ class FootballGame {
       return;
     }
 
+    // Skill Move animation (F Key stepover cut)
+    if (player.skillTimer > 0) {
+      player.skillTimer -= dt;
+      const progress = 1.0 - (player.skillTimer / 0.4);
+      player.parts.torso.rotation.y = Math.sin(progress * Math.PI * 2) * 0.45;
+      player.parts.leftLeg.rotation.x = Math.sin(progress * Math.PI * 4) * 0.5;
+      player.parts.rightLeg.rotation.x = -Math.sin(progress * Math.PI * 4) * 0.5;
+      return;
+    }
+
     // 2. Foul fall & roll reaction (Holding shin/ankle on turf)
     if (player.isFouled && player.stumbleTimer > 0) {
       player.parts.torso.rotation.x = -1.35;
@@ -4127,6 +4406,7 @@ class FootballGame {
       player.parts.leftArm.rotation.x = THREE.MathUtils.lerp(player.parts.leftArm.rotation.x, 0, dt * 10);
       player.parts.rightArm.rotation.x = THREE.MathUtils.lerp(player.parts.rightArm.rotation.x, 0, dt * 10);
       player.parts.torso.rotation.x = THREE.MathUtils.lerp(player.parts.torso.rotation.x, 0, dt * 10);
+      player.parts.torso.rotation.z = THREE.MathUtils.lerp(player.parts.torso.rotation.z, 0, dt * 8);
 
       const breath = Math.sin(Date.now() * 0.003 + player.data.num) * 0.015;
       player.parts.torso.position.y = player.baseTorsoY + breath;
@@ -4135,6 +4415,13 @@ class FootballGame {
 
   // --- Players Update (Human Controls + 11v11 AI + Universal Locomotion) ---
   updatePlayers(dt) {
+    // Global Player Timers & Cooldowns
+    const allActiveSquad = [...this.homePlayers, ...this.awayPlayers];
+    allActiveSquad.forEach(p => {
+      if (p.skillCooldown > 0) p.skillCooldown -= dt;
+      if (p.setPieceDelay > 0) p.setPieceDelay -= dt;
+    });
+
     // 0. Match Statistics: Live Possession Tracking
     const homeHasBall = this.homePlayers.some(p => p.hasPossession);
     const awayHasBall = this.awayPlayers.some(p => p.hasPossession);
@@ -4329,7 +4616,9 @@ class FootballGame {
         }
       }
 
-      this.updatePlayerLocomotion(player, dt, true, 8.0);
+      const paceStat = player.data.pace || 75;
+      const pressSpeed = 6.4 + (paceStat / 100) * 2.2;
+      this.updatePlayerLocomotion(player, dt, true, pressSpeed);
       return;
     }
 
@@ -4349,19 +4638,24 @@ class FootballGame {
       }
     }
 
-    const target = new THREE.Vector3(
-      baseSlot.x + this.ball.position.x * 0.35 + forwardOffset,
-      0,
-      baseSlot.z + this.ball.position.z * 0.25 + lateralOffset
-    );
+    let targetX = baseSlot.x + this.ball.position.x * 0.32 + forwardOffset;
+    let targetZ = baseSlot.z + this.ball.position.z * 0.24 + lateralOffset;
 
+    // Home defensive box clamping: Keep defenders from crowding Courtois
+    if (!userHasBall && (player.data.pos === 'CB' || player.data.pos === 'RB' || player.data.pos === 'LB')) {
+      targetX = Math.max(-42.5, Math.min(-14.0, targetX));
+    } else if (!userHasBall) {
+      targetX = Math.max(-32.0, targetX);
+    }
+
+    const target = new THREE.Vector3(targetX, 0, targetZ);
     const dir = new THREE.Vector3().subVectors(target, player.mesh.position);
     const dist = dir.length();
     const isMoving = dist > 0.8;
 
     if (isMoving) {
-      const speed = isMoving ? 7.2 : 0;
-      dir.normalize().multiplyScalar(7.2);
+      const speed = 6.5;
+      dir.normalize().multiplyScalar(speed);
       player.mesh.position.addScaledVector(dir, dt);
       player.mesh.rotation.y = Math.atan2(dir.x, dir.z);
       this.updatePlayerLocomotion(player, dt, isMoving, speed);
@@ -4411,14 +4705,18 @@ class FootballGame {
       const toCarrier = new THREE.Vector3().subVectors(awayCarrier.mesh.position, player.mesh.position);
       toCarrier.y = 0;
       const d = toCarrier.length();
-      if (d < 4.5) {
+      if (d < 5.0) {
         toCarrier.normalize();
-        player.mesh.position.addScaledVector(toCarrier, 6.5 * dt);
-        if (d < 1.6 && player.diveTimer <= 0) {
-          player.diveTimer = 0.7;
+        player.mesh.position.addScaledVector(toCarrier, 6.8 * dt);
+        if (d < 1.7 && player.diveTimer <= 0) {
+          player.diveTimer = 0.75;
           player.diveDir = toCarrier.z > 0 ? 1 : -1;
           awayCarrier.hasPossession = false;
-          awayCarrier.stumbleTimer = 0.5;
+          awayCarrier.stumbleTimer = 0.8;
+          // Repel opponent attacker safely away from GK to avoid getting stuck
+          const pushOutDir = new THREE.Vector3(1, 0, (Math.random() - 0.5) * 0.6).normalize();
+          awayCarrier.mesh.position.addScaledVector(pushOutDir, 2.8);
+          if (awayCarrier.vel) awayCarrier.vel.copy(pushOutDir).multiplyScalar(5.0);
           player.hasPossession = true;
           this.audio.playTackle();
         }
@@ -4551,14 +4849,18 @@ class FootballGame {
       const toCarrier = new THREE.Vector3().subVectors(this.activePlayer.mesh.position, player.mesh.position);
       toCarrier.y = 0;
       const d = toCarrier.length();
-      if (d < 4.5) {
+      if (d < 5.0) {
         toCarrier.normalize();
-        player.mesh.position.addScaledVector(toCarrier, 6.5 * dt);
-        if (d < 1.6 && player.diveTimer <= 0) {
-          player.diveTimer = 0.7;
+        player.mesh.position.addScaledVector(toCarrier, 6.8 * dt);
+        if (d < 1.7 && player.diveTimer <= 0) {
+          player.diveTimer = 0.75;
           player.diveDir = toCarrier.z > 0 ? 1 : -1;
           this.activePlayer.hasPossession = false;
-          this.activePlayer.stumbleTimer = 0.5;
+          this.activePlayer.stumbleTimer = 0.8;
+          // Repel active player safely back away from GK
+          const pushOutDir = new THREE.Vector3(-1, 0, (Math.random() - 0.5) * 0.6).normalize();
+          this.activePlayer.mesh.position.addScaledVector(pushOutDir, 2.8);
+          if (this.activePlayer.vel) this.activePlayer.vel.copy(pushOutDir).multiplyScalar(5.0);
           player.hasPossession = true;
           this.audio.playTackle();
         }
@@ -4612,7 +4914,7 @@ class FootballGame {
     this.updatePlayerLocomotion(player, dt, Math.abs(player.mesh.position.z - targetZ) > 0.1, 4.0);
   }
 
-  // --- Away Carrier AI: Authentic Dribbling, Passing & Lethal Shooting ---
+  // --- Away Carrier AI: Authentic Team Playmaking, Passing & Lethal Finishing ---
   updateAwayCarrierAI(player, dt) {
     // If set piece is active, wait for PLAYING state then execute
     if (this.matchManager && this.matchManager.state === MatchState.OUT_OF_BOUNDS) {
@@ -4632,26 +4934,59 @@ class FootballGame {
       return;
     }
 
-    // Direction towards Home goal (-50, 0, 0)
-    let toGoal = new THREE.Vector3(-50.0, 0, 0).sub(player.mesh.position).normalize();
+    const diff = this.getDifficultyConfig();
+    const pos = player.data.pos || 'CM';
+    const paceStat = player.data.pace || 80;
+    const driStat = player.data.dri || 80;
+    const pasStat = player.data.pas || 75;
+    const shoStat = player.data.sho || 75;
 
-    // Check for user/defender blocking path ahead
+    // Tactical target direction based on player role and pitch zone
+    let moveDir = new THREE.Vector3(-1, 0, 0); // Base forward direction
+    const pX = player.mesh.position.x;
+    const pZ = player.mesh.position.z;
+
+    if (pos === 'CB' || pos === 'RB' || pos === 'LB') {
+      // Defenders build from the back: don't rush blindly into opponent box
+      if (pX > 5) {
+        moveDir.set(-0.4, 0, (Math.sign(pZ) || 1) * 0.3); // Patient lateral build-up
+      } else {
+        moveDir.set(-0.2, 0, 0);
+      }
+    } else if (pos === 'RW' || pos === 'LW') {
+      // Wingers hug the touchline until final third, then cut inside
+      const wingSide = pos === 'RW' ? 1 : -1;
+      if (pX > -25) {
+        moveDir.set(-0.85, 0, wingSide * 0.5);
+      } else {
+        // Final third: cut diagonal towards goal
+        moveDir.set(-0.8, 0, -wingSide * 0.6);
+      }
+    } else if (pos === 'CDM' || pos === 'CM') {
+      // Midfield maestros orchestrate possession and search passing lanes
+      moveDir.set(-0.7, 0, (Math.random() - 0.5) * 0.4);
+    } else {
+      // ST / CAM: Probe the penalty area
+      moveDir = new THREE.Vector3(-50.0, 0, 0).sub(player.mesh.position).normalize();
+    }
+
+    // Dynamic defender evasion (cut around pressing human defender)
     if (this.activePlayer) {
       const toUser = new THREE.Vector3().subVectors(this.activePlayer.mesh.position, player.mesh.position);
       const distUser = toUser.length();
-      if (distUser < 3.8 && toUser.x < 0) {
-        // Lateral evasion: cut diagonally left or right
-        const evadeZ = Math.sign(player.mesh.position.z - this.activePlayer.mesh.position.z || 1);
-        toGoal.z += evadeZ * 0.55;
-        toGoal.normalize();
+      if (distUser < 3.6 && toUser.x < 0) {
+        const evadeZ = Math.sign(pZ - this.activePlayer.mesh.position.z || 1);
+        moveDir.z += evadeZ * 0.7;
       }
     }
+    moveDir.normalize();
 
-    const paceStat = player.data.pace || 80;
-    const speed = 7.4 + (paceStat / 100) * 1.8;
+    // Speed calculation: apply on-ball speed penalty consistent with player locomotion engine
+    const isSprinting = (pX < -15 || Math.abs(moveDir.x) > 0.7);
+    const speed = this.locomotionEngine.calculateMaxSpeed(player, isSprinting);
 
-    player.mesh.position.addScaledVector(toGoal, speed * dt);
-    player.mesh.rotation.y = Math.atan2(toGoal.x, toGoal.z);
+    player.mesh.position.addScaledVector(moveDir, speed * dt);
+    player.mesh.rotation.y = Math.atan2(moveDir.x, moveDir.z);
 
     // Natural foot dribble position
     const fwd = new THREE.Vector3(Math.sin(player.mesh.rotation.y), 0, Math.cos(player.mesh.rotation.y));
@@ -4664,40 +4999,42 @@ class FootballGame {
     // AI Tactical Decision Tick
     player.aiDecisionTimer -= dt;
     if (player.aiDecisionTimer <= 0) {
-      player.aiDecisionTimer = 0.22 + Math.random() * 0.2;
+      player.aiDecisionTimer = 0.20 + Math.random() * 0.22;
 
-      // 1. SHOOTING EVALUATION
-      const distToGoal = player.mesh.position.distanceTo(new THREE.Vector3(-50, 0, 0));
-      const shoStat = player.data.sho || 75;
-
-      // In the penalty box (< 20m)
-      if (player.mesh.position.x < -32 && Math.abs(player.mesh.position.z) < 18 && player.aiShotCooldown <= 0) {
-        if (Math.random() < 0.85) {
-          this.executeAIShot(player, false);
-          return;
-        }
-      }
-      // Outside the box (20-30m) with high shooting stat
-      else if (player.mesh.position.x < -22 && player.mesh.position.x >= -32 && Math.abs(player.mesh.position.z) < 16 && player.aiShotCooldown <= 0) {
-        if (shoStat >= 77 && Math.random() < 0.55) {
-          this.executeAIShot(player, false);
-          return;
-        }
-      }
-
-      // 2. PASSING & PLAYMAKING EVALUATION
-      // If closed down by user / defender (< 3.5m) OR in crossing zone OR teammate is in open space
       let isUnderPressure = false;
-      if (this.activePlayer && this.activePlayer.mesh.position.distanceTo(player.mesh.position) < 3.6) {
+      if (this.activePlayer && this.activePlayer.mesh.position.distanceTo(player.mesh.position) < 3.8) {
         isUnderPressure = true;
       }
 
-      const inCrossingZone = player.mesh.position.x < -26 && Math.abs(player.mesh.position.z) > 12;
+      const inCrossingZone = pX < -26 && Math.abs(pZ) > 11;
+      const inPenaltyBox = pX < -33 && Math.abs(pZ) < 18;
+      const inShootingRange = pX < -24 && pX >= -33 && Math.abs(pZ) < 16;
 
-      if ((isUnderPressure || inCrossingZone || Math.random() < 0.45) && player.aiPassCooldown <= 0) {
+      // 1. EVALUATE PASSING & PLAYMAKING FIRST (Build-up football)
+      // Defenders & Midfielders always prioritize passing to open teammates
+      const isPlaymaker = (pos === 'CDM' || pos === 'CM' || pos === 'CAM' || pos === 'CB' || pos === 'LB' || pos === 'RB');
+      const passChance = isPlaymaker ? (diff.aiPassFrequency + 0.15) : diff.aiPassFrequency;
+
+      if ((isUnderPressure || inCrossingZone || Math.random() < passChance) && player.aiPassCooldown <= 0) {
         const bestPass = this.findBestAIPass(player, false);
         if (bestPass) {
+          // If in box and has a clear tap-in or layoff, pass instead of forcing low-percentage shot
           this.executeAIPass(player, false, bestPass);
+          return;
+        }
+      }
+
+      // 2. EVALUATE SHOOTING (Only when genuine scoring chance arises)
+      if (inPenaltyBox && player.aiShotCooldown <= 0) {
+        const shotProb = (diff.aiShotFrequencyInBox * (shoStat / 80));
+        if (Math.random() < shotProb) {
+          this.executeAIShot(player, false);
+          return;
+        }
+      } else if (inShootingRange && player.aiShotCooldown <= 0 && shoStat >= 78) {
+        // Long shot with competent shooter
+        if (Math.random() < 0.35 * (diff.aiShotAccuracy / 0.6)) {
+          this.executeAIShot(player, false);
           return;
         }
       }
@@ -4744,59 +5081,83 @@ class FootballGame {
 
   // --- Away Defending AI: Compact Zonal Shape & Smart Tackles ---
   updateAwayDefendingAI(player, baseSlot, dt, isPressing) {
+    const diff = this.getDifficultyConfig();
+    const paceStat = player.data.pace || 75;
+    const defStat = player.data.def || 75;
+
     if (isPressing) {
       const toBall = new THREE.Vector3().subVectors(this.ball.position, player.mesh.position);
       toBall.y = 0;
       const dist = toBall.length();
       toBall.normalize();
 
-      player.mesh.position.addScaledVector(toBall, 8.0 * dt);
+      // Dynamic press speed scaled by pace and difficulty multiplier
+      const pressSpeed = (6.4 + (paceStat / 100) * 2.2) * diff.aiPressSpeedMultiplier;
+
+      player.mesh.position.addScaledVector(toBall, pressSpeed * dt);
       player.mesh.rotation.y = Math.atan2(toBall.x, toBall.z);
 
       // AI STANDING TACKLE & INTERCEPTION MECHANIC:
-      if (dist < 1.65 && player.tackleCooldown <= 0) {
+      if (dist < 1.7 && player.tackleCooldown <= 0) {
         player.kickTimer = 0.3;
         player.tackleCooldown = 1.1;
 
         const userVulnerable = this.isShiftDown || (this.activePlayer && this.activePlayer.hasPossession);
-        if (userVulnerable) {
-          if (this.activePlayer) {
+        if (userVulnerable && this.activePlayer) {
+          const userDri = this.activePlayer.data.dri || 80;
+          const tackleChance = Math.min(0.85, Math.max(0.35, ((defStat * 1.05) - userDri * 0.45) / 100 + 0.15)) * (diff.aiTackleSuccess / 0.6);
+
+          if (Math.random() < tackleChance) {
             this.activePlayer.hasPossession = false;
             this.activePlayer.stumbleTimer = 0.45;
-          }
+            this.audio.playTackle();
+            this.matchStats.awayTackles++;
 
-          this.audio.playTackle();
-          this.matchStats.awayTackles++;
-
-          const defSkill = (player.data.def || 75) / 100;
-          if (Math.random() < defSkill * 0.75) {
             player.hasPossession = true;
             this.kickCooldown = 0.3;
           } else {
-            const tackleBounce = toBall.clone().add(new THREE.Vector3(0, 0.2, (Math.random() - 0.5) * 0.8)).normalize();
-            this.ballVel.copy(tackleBounce).multiplyScalar(14.0);
-            this.kickCooldown = 0.4;
+            // Foul check: Aggressive tackle from behind or failed tackle
+            const fwd = new THREE.Vector3(Math.sin(player.mesh.rotation.y), 0, Math.cos(player.mesh.rotation.y));
+            const userFwd = new THREE.Vector3(Math.sin(this.activePlayer.mesh.rotation.y), 0, Math.cos(this.activePlayer.mesh.rotation.y));
+            const isBehind = fwd.dot(userFwd) > 0.1;
+
+            if ((isBehind || Math.random() < diff.aiFoulChance * 0.5) && this.foulCooldown <= 0) {
+              const isSlide = Math.random() < 0.25;
+              this.triggerFoul(player, this.activePlayer, isSlide);
+              return;
+            } else {
+              const tackleBounce = toBall.clone().add(new THREE.Vector3(0, 0.2, (Math.random() - 0.5) * 0.8)).normalize();
+              this.ballVel.copy(tackleBounce).multiplyScalar(12.0);
+              this.kickCooldown = 0.35;
+            }
           }
         }
       }
 
-      this.updatePlayerLocomotion(player, dt, true, 8.0);
+      this.updatePlayerLocomotion(player, dt, true, pressSpeed);
     } else {
-      // Hold 4-3-3 formation position shifting with ball
-      const target = new THREE.Vector3(
-        baseSlot.x + this.ball.position.x * 0.38,
-        0,
-        baseSlot.z + this.ball.position.z * 0.28
-      );
+      // Hold 4-3-3 formation position shifting with ball, with defensive boundary clamping
+      let targetX = baseSlot.x + this.ball.position.x * 0.32;
+      let targetZ = baseSlot.z + this.ball.position.z * 0.24;
+
+      // Defensive Box Clamping: Prevent CBs and fullbacks from clustering on the GK
+      if (player.data.pos === 'CB' || player.data.pos === 'RB' || player.data.pos === 'LB') {
+        targetX = Math.min(42.5, Math.max(14.0, targetX));
+      } else {
+        targetX = Math.min(32.0, targetX); // Midfielders don't crowd inside 6-yard box
+      }
+
+      const target = new THREE.Vector3(targetX, 0, targetZ);
       const dir = new THREE.Vector3().subVectors(target, player.mesh.position);
       const dist = dir.length();
       const isMoving = dist > 0.8;
 
       if (isMoving) {
-        dir.normalize().multiplyScalar(6.5);
+        const shapeSpeed = 6.2;
+        dir.normalize().multiplyScalar(shapeSpeed);
         player.mesh.position.addScaledVector(dir, dt);
         player.mesh.rotation.y = Math.atan2(dir.x, dir.z);
-        this.updatePlayerLocomotion(player, dt, isMoving, 6.5);
+        this.updatePlayerLocomotion(player, dt, isMoving, shapeSpeed);
       } else {
         this.updatePlayerLocomotion(player, dt, false, 0);
       }
@@ -5177,6 +5538,15 @@ class FootballGame {
         speedButtons.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         this.timeScale = parseInt(btn.dataset.speed);
+      });
+    });
+
+    const diffButtons = document.querySelectorAll('#difficulty-control .seg-btn');
+    diffButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        diffButtons.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.setDifficulty(btn.dataset.diff);
       });
     });
 

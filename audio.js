@@ -47,8 +47,9 @@ class FIFAAudioEngine {
         title: "Electric Kickoff",
         artist: "Yasirin Sound Lab",
         genre: "Electro Stadium Hype",
+        style: "electro",
         bpm: 124,
-        scale: [57, 60, 62, 64, 67, 69, 72], // A minor pentatonic / hexatonic
+        scale: [57, 60, 62, 64, 67, 69, 72], // A minor
         chords: [
           [45, 57, 60, 64], // Am
           [41, 53, 57, 60], // F
@@ -60,28 +61,60 @@ class FIFAAudioEngine {
         id: 2,
         title: "Golden Trophy",
         artist: "Bernabéu Beats",
-        genre: "Groovy Synthwave",
-        bpm: 114,
+        genre: "Groovy Hip-Hop / 808",
+        style: "hiphop",
+        bpm: 92,
         scale: [50, 53, 55, 57, 60, 62, 65], // D minor
         chords: [
-          [50, 57, 62, 65], // Dm
-          [46, 53, 58, 62], // Bb
-          [48, 55, 60, 65], // C
-          [45, 52, 57, 60]  // Am
+          [50, 57, 62, 65], // Dm7
+          [46, 53, 58, 62], // Bbmaj7
+          [48, 55, 60, 65], // C7
+          [45, 52, 57, 60]  // Am7
         ]
       },
       {
         id: 3,
         title: "Champions Arena",
         artist: "FIFA Grand Stage",
-        genre: "Festival Bass Rush",
+        genre: "Festival EDM Anthem",
+        style: "festival",
         bpm: 128,
         scale: [52, 55, 57, 59, 62, 64, 67], // E minor
         chords: [
           [40, 52, 55, 59], // Em
           [48, 55, 60, 64], // C
           [43, 55, 59, 62], // G
-          [45, 57, 60, 64]  // D/Am
+          [47, 54, 59, 62]  // Bm
+        ]
+      },
+      {
+        id: 4,
+        title: "Samba do Brasil",
+        artist: "Rio Carnival FC",
+        genre: "Samba Funk Fusion",
+        style: "samba",
+        bpm: 108,
+        scale: [53, 57, 60, 62, 65, 67, 69], // F major pentatonic/hexatonic
+        chords: [
+          [41, 53, 57, 60], // Fmaj7
+          [46, 55, 58, 62], // Bb9
+          [48, 55, 60, 64], // C7
+          [45, 53, 57, 60]  // Dm7
+        ]
+      },
+      {
+        id: 5,
+        title: "Midnight Stadium",
+        artist: "Outrun City",
+        genre: "80s Retro Synthwave",
+        style: "synthwave",
+        bpm: 104,
+        scale: [57, 59, 60, 64, 65, 67, 71], // A natural minor
+        chords: [
+          [45, 57, 60, 64], // Am
+          [48, 55, 60, 64], // C
+          [41, 53, 57, 60], // F
+          [43, 55, 59, 62]  // G
         ]
       }
     ];
@@ -243,28 +276,44 @@ class FIFAAudioEngine {
   }
 
   playPatternStep(time, step, track) {
+    const style = track.style || 'electro';
+    if (style === 'hiphop') {
+      this.playPatternStepHipHop(time, step, track);
+    } else if (style === 'festival') {
+      this.playPatternStepFestival(time, step, track);
+    } else if (style === 'samba') {
+      this.playPatternStepSamba(time, step, track);
+    } else if (style === 'synthwave') {
+      this.playPatternStepSynthwave(time, step, track);
+    } else {
+      this.playPatternStepElectro(time, step, track);
+    }
+  }
+
+  // 1. ELECTRO STADIUM: Energetic 4-on-the-floor, driving bass, cutting arp
+  playPatternStepElectro(time, step, track) {
     const bar = Math.floor(step / 16);
     const stepInBar = step % 16;
     const chord = track.chords[bar % track.chords.length];
 
-    // 1. KICK DRUM: Punchy 4-on-the-floor on steps 0, 4, 8, 12 + occasional syncopation
+    // Kick: 4-on-the-floor
     if (stepInBar % 4 === 0 || (stepInBar === 14 && bar % 2 === 1)) {
       this.synthKick(time, stepInBar === 0 ? 0.95 : 0.8);
     }
 
-    // 2. SNARE / CLAP: On beats 2 and 4 (steps 4 and 12) + roll at end of 4th bar
+    // Snare / Clap on 4 and 12 + roll at 4th bar
     if (stepInBar === 4 || stepInBar === 12) {
       this.synthSnare(time, 0.7);
     } else if (bar === 3 && stepInBar >= 12) {
       this.synthSnare(time, 0.5 + (stepInBar - 12) * 0.1);
     }
 
-    // 3. HI-HATS: 16th-note groovy offbeat pattern
+    // Hi-hats
     if (stepInBar % 2 === 1) {
       this.synthHiHat(time, stepInBar % 4 === 2 ? 0.45 : 0.3, stepInBar === 10);
     }
 
-    // 4. BASSLINE: Syncopated synth bass following current chord root
+    // Bassline
     const bassNote = chord[0];
     const playBassSteps = [0, 3, 6, 8, 10, 12, 14];
     if (playBassSteps.includes(stepInBar)) {
@@ -273,16 +322,174 @@ class FIFAAudioEngine {
       this.synthBass(time, noteFreq, 0.16);
     }
 
-    // 5. CHORD PAD / STABS: Melodic rhythmic stabs on offbeats
+    // Chord Stabs
     if (stepInBar === 2 || stepInBar === 8 || stepInBar === 11) {
       this.synthChordStab(time, chord, 0.22);
     }
 
-    // 6. LEAD ARPEGGIO / HOOK: Catchy upbeat melodic motif
+    // Lead Arp
     if (step % 2 === 0) {
       const melodyIdx = (step * 3 + bar) % track.scale.length;
-      const note = track.scale[melodyIdx] + 12; // Octave up
+      const note = track.scale[melodyIdx] + 12;
       this.synthLeadArp(time, this.mtof(note), 0.14);
+    }
+  }
+
+  // 2. HIP-HOP / 808: Deep half-time groove, sub bass, trap hi-hat rolls
+  playPatternStepHipHop(time, step, track) {
+    const bar = Math.floor(step / 16);
+    const stepInBar = step % 16;
+    const chord = track.chords[bar % track.chords.length];
+
+    // Kick: Boom-bap / modern hip-hop pattern (steps 0, 10; bar 2 adds step 3 & 14)
+    if (stepInBar === 0 || stepInBar === 10 || (bar % 2 === 1 && (stepInBar === 3 || stepInBar === 13))) {
+      this.synthKick(time, 1.0);
+    }
+
+    // Half-time Snare on beat 3 (step 8)
+    if (stepInBar === 8) {
+      this.synthSnare(time, 0.85);
+    }
+
+    // Trap-style hi-hats with occasional fast rolls
+    if (stepInBar % 2 === 0) {
+      this.synthHiHat(time, 0.25, false);
+    }
+    // Hi-hat roll in bar 3 end
+    if (bar === 3 && stepInBar >= 11) {
+      this.synthHiHat(time, 0.2, false);
+    }
+
+    // Booming 808 Sub Bass (held longer)
+    if (stepInBar === 0 || stepInBar === 10) {
+      const bassFreq = this.mtof(chord[0] - 12);
+      this.synth808Sub(time, bassFreq, 0.45);
+    }
+
+    // Neo-soul Chord keys (laid-back, warm)
+    if (stepInBar === 1 || stepInBar === 9) {
+      this.synthRetroPad(time, chord, 0.55);
+    }
+
+    // Chill Pluck melody
+    if (stepInBar === 4 || stepInBar === 7 || stepInBar === 12 || stepInBar === 15) {
+      const melIdx = (stepInBar + bar * 2) % track.scale.length;
+      this.synthPluck(time, this.mtof(track.scale[melIdx] + 12), 0.35);
+    }
+  }
+
+  // 3. FESTIVAL EDM: Pumping bass, high energy, soaring leads
+  playPatternStepFestival(time, step, track) {
+    const bar = Math.floor(step / 16);
+    const stepInBar = step % 16;
+    const chord = track.chords[bar % track.chords.length];
+
+    // Driving four-on-the-floor
+    if (stepInBar % 4 === 0) {
+      this.synthKick(time, 1.0);
+    }
+
+    // Powerful claps on 4 and 12
+    if (stepInBar === 4 || stepInBar === 12) {
+      this.synthSnare(time, 0.8);
+    }
+
+    // Fast energetic offbeat open hi-hats
+    if (stepInBar % 2 === 1) {
+      this.synthHiHat(time, 0.4, stepInBar % 4 === 2);
+    }
+
+    // Pumping Bassline (sidechained on offbeats 1, 3, 5, 7, etc.)
+    if (stepInBar % 2 === 1) {
+      const noteFreq = this.mtof(chord[0]);
+      this.synthBass(time, noteFreq, 0.12);
+    }
+
+    // Big Room Supersaw Leads
+    if (stepInBar === 0 || stepInBar === 3 || stepInBar === 6 || stepInBar === 10 || stepInBar === 14) {
+      this.synthChordStab(time, chord, 0.18);
+      const leadNote = track.scale[(bar + stepInBar) % track.scale.length] + 12;
+      this.synthLeadArp(time, this.mtof(leadNote), 0.22);
+    }
+  }
+
+  // 4. SAMBA FUNK: Latin syncopation, bongo/rimshots, slap bass, brass stabs
+  playPatternStepSamba(time, step, track) {
+    const bar = Math.floor(step / 16);
+    const stepInBar = step % 16;
+    const chord = track.chords[bar % track.chords.length];
+
+    // Surdo/Kick Samba syncopation: steps 0, 6, 10
+    if (stepInBar === 0 || stepInBar === 6 || stepInBar === 10) {
+      this.synthKick(time, stepInBar === 0 ? 0.9 : 0.7);
+    }
+
+    // Rimshot/Snare syncopated pattern: steps 3, 7, 12, 14
+    if (stepInBar === 3 || stepInBar === 7 || stepInBar === 12 || stepInBar === 14) {
+      this.synthRimshot(time, 0.65);
+    }
+
+    // Shaker / Hi-hat 16th continuous groove with accents
+    const isAccent = (stepInBar % 4 === 1 || stepInBar % 4 === 3);
+    this.synthHiHat(time, isAccent ? 0.35 : 0.18, false);
+
+    // Bouncy funk slap bass
+    if (stepInBar === 0 || stepInBar === 4 || stepInBar === 6 || stepInBar === 10 || stepInBar === 13) {
+      const isHighNote = (stepInBar === 6 || stepInBar === 13);
+      const bassNote = chord[0] + (isHighNote ? 12 : 0);
+      this.synthBass(time, this.mtof(bassNote), 0.12);
+    }
+
+    // Brassy syncopated chord stabs
+    if (stepInBar === 2 || stepInBar === 5 || stepInBar === 11) {
+      this.synthChordStab(time, chord, 0.15);
+    }
+
+    // Lively flute/whistle style top notes
+    if (bar % 2 === 1 && (stepInBar === 4 || stepInBar === 8 || stepInBar === 10 || stepInBar === 14)) {
+      const note = track.scale[(stepInBar * 2) % track.scale.length] + 12;
+      this.synthLeadArp(time, this.mtof(note), 0.15);
+    }
+  }
+
+  // 5. 80s SYNTHWAVE: Driving 8th note rolling bass, gated snares, nostalgic pads
+  playPatternStepSynthwave(time, step, track) {
+    const bar = Math.floor(step / 16);
+    const stepInBar = step % 16;
+    const chord = track.chords[bar % track.chords.length];
+
+    // Steady Kick on 0 and 8
+    if (stepInBar === 0 || stepInBar === 8) {
+      this.synthKick(time, 0.9);
+    }
+
+    // Gated Snare on 4 and 12
+    if (stepInBar === 4 || stepInBar === 12) {
+      this.synthSnare(time, 0.8);
+    }
+
+    // Hi-hats on 8th notes
+    if (stepInBar % 2 === 0) {
+      this.synthHiHat(time, 0.28, false);
+    }
+
+    // Driving 8th-note Synthwave Bass (Root - Octave alternating)
+    if (stepInBar % 2 === 0) {
+      const isOctave = (stepInBar % 4 === 2);
+      const noteFreq = this.mtof(chord[0] - 12 + (isOctave ? 12 : 0));
+      this.synthBass(time, noteFreq, 0.14);
+    }
+
+    // Warm analog chords pad (held across steps)
+    if (stepInBar === 0 || stepInBar === 8) {
+      this.synthRetroPad(time, chord, 0.45);
+    }
+
+    // 80s Lead Arpeggio
+    if (stepInBar % 2 === 1) {
+      const arpStep = Math.floor(step / 2);
+      const note = track.scale[arpStep % track.scale.length] + 12;
+      this.synthPluck(time, this.mtof(note), 0.2);
     }
   }
 
@@ -451,6 +658,104 @@ class FIFAAudioEngine {
 
       osc.start(time);
       osc.stop(time + dur);
+    } catch (e) {}
+  }
+
+  synth808Sub(time, freq, dur = 0.45) {
+    if (!this.musicGain || !this.ctx) return;
+    try {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+
+      osc.type = 'sine';
+      // Pitch drop for punchy 808
+      osc.frequency.setValueAtTime(freq * 1.5, time);
+      osc.frequency.exponentialRampToValueAtTime(freq, time + 0.05);
+
+      gain.gain.setValueAtTime(0.55, time);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+
+      osc.connect(gain);
+      gain.connect(this.musicGain);
+
+      osc.start(time);
+      osc.stop(time + dur);
+    } catch (e) {}
+  }
+
+  synthRimshot(time, velocity = 0.65) {
+    if (!this.musicGain || !this.ctx) return;
+    try {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(800, time);
+      osc.frequency.exponentialRampToValueAtTime(240, time + 0.03);
+
+      gain.gain.setValueAtTime(velocity * 0.5, time);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.04);
+
+      osc.connect(gain);
+      gain.connect(this.musicGain);
+
+      osc.start(time);
+      osc.stop(time + 0.04);
+    } catch (e) {}
+  }
+
+  synthPluck(time, freq, velocity = 0.25) {
+    if (!this.musicGain || !this.ctx) return;
+    try {
+      const osc = this.ctx.createOscillator();
+      const filter = this.ctx.createBiquadFilter();
+      const gain = this.ctx.createGain();
+
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(freq, time);
+
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(3200, time);
+      filter.frequency.exponentialRampToValueAtTime(400, time + 0.15);
+
+      gain.gain.setValueAtTime(velocity * 0.4, time);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + 0.18);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.musicGain);
+
+      osc.start(time);
+      osc.stop(time + 0.18);
+    } catch (e) {}
+  }
+
+  synthRetroPad(time, chordNotes, dur = 0.5) {
+    if (!this.musicGain || !this.ctx) return;
+    try {
+      chordNotes.forEach((midi) => {
+        const osc = this.ctx.createOscillator();
+        const filter = this.ctx.createBiquadFilter();
+        const gain = this.ctx.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(this.mtof(midi), time);
+
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(1200, time);
+
+        // Soft attack and decay
+        gain.gain.setValueAtTime(0.001, time);
+        gain.gain.linearRampToValueAtTime(0.08, time + 0.06);
+        gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.musicGain);
+
+        osc.start(time);
+        osc.stop(time + dur);
+      });
     } catch (e) {}
   }
 

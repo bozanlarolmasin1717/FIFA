@@ -1,4 +1,4 @@
-﻿# OS generated files
+# OS generated files
 Thumbs.db
 Thumbs.db:encryptable
 ehthumbs.db
@@ -24,3 +24,6 @@ Saved/
 *.suo
 *.xcodeproj
 *.xcworkspace
+
+# Scratch / other
+amongus/
