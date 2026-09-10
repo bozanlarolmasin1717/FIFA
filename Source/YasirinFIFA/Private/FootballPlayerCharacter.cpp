@@ -82,7 +82,7 @@ void AFootballPlayerCharacter::Tick(float DeltaTime)
 		FVector BallPos = ControlledBall->GetActorLocation();
 		FVector DribbleOffset = TargetPos - BallPos;
 
-		if (DribbleOffset.Size() > 160.0f)
+		if (DribbleOffset.Size() > 220.0f)
 		{
 			// Ball got tackled or knocked away
 			ReleaseBallPossession();
